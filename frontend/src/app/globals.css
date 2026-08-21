@@ -1,0 +1,297 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: var(--font-anton), "Arial Narrow", system-ui, sans-serif;
+  --font-sans: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
+
+  /* Night-harbour ink scale */
+  --color-ink-950: #01040a;
+  --color-ink-900: #02070e;
+  --color-ink-850: #040c17;
+  --color-ink-800: #06111d;
+  --color-ink-750: #081523;
+  --color-ink-700: #0b1a29;
+
+  --color-line: #1b2637;
+  --color-line-soft: #131c29;
+
+  /* Brand */
+  --color-cream: #ede5da;
+  --color-gold-300: #ffd971;
+  --color-gold-400: #ffc94a;
+  --color-gold-500: #f0ac2a;
+  --color-gold-600: #dd9b23;
+
+  --color-mist: #aab5c4;
+  --color-mist-dim: #8b95a5;
+
+  /* Stage accents */
+  --color-detect: #7b7bf5;
+  --color-diagnose: #f0596a;
+  --color-decide: #4ade80;
+  --color-execute: #4a90f0;
+  --color-measure: #f0ac2a;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-ink-900);
+    color: var(--color-cream);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--color-gold-500);
+    color: #05070c;
+  }
+}
+
+/* ---------------------------------------------------------------
+   Page grain — a whisper of tooth so large flat fields don't band.
+   Deliberately below the threshold of "texture"; the headline is plain
+   live text.
+   --------------------------------------------------------------- */
+:root {
+  --grain-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 1 0 0 0 -0.62'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+
+.page-grain::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  background-image: var(--grain-light);
+  opacity: 0.022;
+  mix-blend-mode: overlay;
+}
+
+/* Page shell — full-bleed with breathing gutters, so the wordmark and
+   headline sit hard against the left edge instead of floating in a
+   centred column on wide displays. */
+.shell {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 2560px;
+  padding-inline: clamp(20px, 3.2vw, 88px);
+}
+
+/* ---------------------------------------------------------------
+   Hero footage
+
+   Small screens: an atmospheric backdrop that dissolves downward.
+
+   Desktop: a plate anchored to the right edge, occupying the space to
+   the right of the copy column. Its width is capped and the hero's
+   min-height tracks that width (h >= w * 9/16), so `object-cover`
+   always has at least a 16:9 box to fill — the footage is cropped a
+   little at the sides, never top-and-bottom. That is what kept the
+   moon and the tug's hull intact on wide displays.
+   --------------------------------------------------------------- */
+.hero-plate {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 480px;
+}
+
+@media (min-width: 640px) {
+  .hero-plate {
+    height: 600px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .hero-plate {
+    left: auto;
+    right: 0;
+    top: 72px;
+    bottom: 0;
+    height: auto;
+    width: 74%;
+    max-width: 2000px;
+  }
+
+  .hero-shell {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: min(calc(41.7vw + 72px), 1197px);
+  }
+}
+
+.hero-media {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    rgba(0, 0, 0, 0.9) 48%,
+    rgba(0, 0, 0, 0.45) 78%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    rgba(0, 0, 0, 0.9) 48%,
+    rgba(0, 0, 0, 0.45) 78%,
+    transparent 100%
+  );
+}
+
+@media (min-width: 1024px) {
+  .hero-media {
+    -webkit-mask-image:
+      linear-gradient(
+        to right,
+        transparent 0%,
+        rgba(0, 0, 0, 0.1) 6%,
+        rgba(0, 0, 0, 0.48) 16%,
+        rgba(0, 0, 0, 0.86) 26%,
+        #000 35%
+      ),
+      linear-gradient(to bottom, transparent 0%, #000 7%, #000 96%, transparent 100%);
+    mask-image:
+      linear-gradient(
+        to right,
+        transparent 0%,
+        rgba(0, 0, 0, 0.1) 6%,
+        rgba(0, 0, 0, 0.48) 16%,
+        rgba(0, 0, 0, 0.86) 26%,
+        #000 35%
+      ),
+      linear-gradient(to bottom, transparent 0%, #000 7%, #000 96%, transparent 100%);
+    -webkit-mask-composite: source-in;
+    mask-composite: intersect;
+  }
+}
+
+/* ---------------------------------------------------------------
+   Buttons
+
+   Extruded gold: a lit top bevel, a solid colour "side wall" cast by an
+   offset hard shadow, and an ambient glow beneath. Hover lifts the cap
+   and grows the wall; :active presses it down into the page so the
+   travel reads physically.
+   --------------------------------------------------------------- */
+.btn-gold {
+  --btn-edge: #a86c0b;
+  --btn-edge-dark: #815209;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffdc74 0%, #fcc748 38%, #f4ad25 72%, #eea016 100%);
+  color: #17110a;
+  font-weight: 700;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    inset 0 -1px 1px rgba(120, 68, 0, 0.3),
+    0 5px 0 0 var(--btn-edge),
+    0 6px 0 0 var(--btn-edge-dark),
+    0 12px 24px -8px rgba(240, 172, 42, 0.55),
+    0 2px 6px rgba(0, 0, 0, 0.4);
+  transition:
+    transform 150ms cubic-bezier(0.3, 0.7, 0.4, 1),
+    box-shadow 150ms cubic-bezier(0.3, 0.7, 0.4, 1),
+    filter 150ms ease;
+}
+
+.btn-gold:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.04);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -1px 1px rgba(120, 68, 0, 0.3),
+    0 7px 0 0 var(--btn-edge),
+    0 8px 0 0 var(--btn-edge-dark),
+    0 18px 32px -10px rgba(240, 172, 42, 0.7),
+    0 3px 8px rgba(0, 0, 0, 0.45);
+}
+
+.btn-gold:active {
+  transform: translateY(4px);
+  box-shadow:
+    inset 0 2px 5px rgba(120, 68, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 1px 0 0 var(--btn-edge),
+    0 2px 0 0 var(--btn-edge-dark),
+    0 5px 12px -6px rgba(240, 172, 42, 0.5);
+}
+
+.btn-gold:focus-visible {
+  outline: 2px solid #ffd76a;
+  outline-offset: 3px;
+}
+
+/* ---------------------------------------------------------------
+   Scroll reveal
+
+   Gated behind `.js` so the page is never blank without JavaScript —
+   the hidden state only exists once the script that can un-hide it has
+   actually run.
+   --------------------------------------------------------------- */
+.js .reveal {
+  opacity: 0;
+  transform: translateY(22px);
+  transition:
+    opacity 720ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 720ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+.js .reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* Above the fold: animate straight off first paint rather than waiting
+   for hydration, so the hero is never a blank frame while JS boots. */
+.js .rise {
+  opacity: 0;
+  animation: rise-in 760ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .js .reveal,
+  .js .reveal.is-visible,
+  .js .rise {
+    opacity: 1;
+    transform: none;
+    transition: none;
+    animation: none;
+  }
+
+  .btn-gold,
+  .btn-gold:hover,
+  .btn-gold:active {
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------
+   Small shared bits
+   --------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

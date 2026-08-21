@@ -1,0 +1,87 @@
+import Image from "next/image";
+import type { ComponentType, SVGProps } from "react";
+import { ClockIcon, RupeeCircleIcon, ShieldSolidIcon, UsersSolidIcon } from "./icons";
+import { Reveal } from "./reveal";
+
+type Stat = {
+  value: string;
+  label: string;
+  Icon: ComponentType<SVGProps<SVGSVGElement>>;
+  tone: string;
+};
+
+const STATS: Stat[] = [
+  { value: "₹3.24 Cr+", label: "Revenue Recovered", Icon: RupeeCircleIcon, tone: "#8b8bf5" },
+  { value: "32,841+", label: "Cases Resolved", Icon: ShieldSolidIcon, tone: "#4a90f0" },
+  { value: "3,200+", label: "Merchants Trust Tugboat", Icon: UsersSolidIcon, tone: "#8b8bf5" },
+  { value: "99.9%", label: "Uptime", Icon: ClockIcon, tone: "#8b8bf5" },
+];
+
+export function BoaStats() {
+  return (
+    <section id="product" className="relative bg-[#050e19] pb-14 lg:pb-[52px]">
+      <div className="shell">
+        <div className="grid items-center gap-10 lg:grid-cols-[400px_1fr] lg:gap-[36px]">
+          {/* Boa */}
+          <Reveal className="flex items-center gap-6">
+            <div className="relative shrink-0">
+              <div
+                className="absolute -inset-2 rounded-full bg-[radial-gradient(circle,rgba(240,172,42,0.18)_0%,transparent_70%)]"
+                aria-hidden
+              />
+              <Image
+                src="/media/boa-avatar.png"
+                alt="Boa, the Tugboat agent, at the wheel"
+                width={360}
+                height={360}
+                className="relative h-[120px] w-[120px] rounded-full ring-1 ring-white/[0.07] lg:h-[158px] lg:w-[158px]"
+              />
+            </div>
+            <div className="max-w-[242px]">
+              <h2 className="text-[23px] font-extrabold tracking-[-0.015em] text-gold-500">
+                Boa is at the wheel.
+              </h2>
+              <p className="mt-3 text-[15px] leading-[1.78] text-[#8f9aa9]">
+                <span className="font-bold text-white">Boa</span> works{" "}
+                <span className="font-medium text-[#7f9df0] underline decoration-[#7f9df0]/60 underline-offset-[3px]">
+                  24×7
+                </span>{" "}
+                to tow back revenue that would have drifted away — so merchants can focus on growing
+                their business.
+              </p>
+            </div>
+          </Reveal>
+
+          {/* Numbers */}
+          <Reveal delay={120} className="rounded-[18px] border border-white/[0.07] bg-white/[0.015] px-4 py-8 lg:px-8 lg:py-8">
+            <dl className="grid grid-cols-2 gap-y-9 md:grid-cols-4 md:gap-y-0">
+              {STATS.map(({ value, label, Icon, tone }, i) => (
+                <div
+                  key={label}
+                  className={`flex flex-col items-center px-2 text-center ${
+                    i > 0 ? "md:border-l md:border-white/[0.07]" : ""
+                  }`}
+                >
+                  <span
+                    className="flex h-[50px] w-[50px] items-center justify-center rounded-full border"
+                    style={{
+                      borderColor: `color-mix(in srgb, ${tone} 40%, transparent)`,
+                      color: tone,
+                      background: `radial-gradient(circle, color-mix(in srgb, ${tone} 12%, transparent) 0%, transparent 72%)`,
+                    }}
+                  >
+                    <Icon className="h-[26px] w-[26px]" />
+                  </span>
+                  <dd className="tabular mt-4 text-[clamp(26px,2.8vw,37px)] font-semibold leading-none tracking-[-0.025em] text-white">
+                    {value}
+                  </dd>
+                  <dt className="mt-3 text-[15px] text-[#8b96a6]">{label}</dt>
+                </div>
+              ))}
+            </dl>
+          </Reveal>
+        </div>
+      </div>
+    </section>
+  );
+}
