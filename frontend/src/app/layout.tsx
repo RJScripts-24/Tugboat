@@ -1,9 +1,18 @@
 import type { Metadata } from "next";
-import { Anton, Figtree } from "next/font/google";
+import { Anton, Figtree, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
 const figtree = Figtree({
   variable: "--font-figtree",
+  subsets: ["latin"],
+  display: "swap",
+});
+
+// Data face for the Control Tower: case IDs, timestamps, hashes and money all
+// need fixed advance widths so columns line up and digits stop dancing.
+const plexMono = IBM_Plex_Mono({
+  variable: "--font-plex-mono",
+  weight: ["400", "500"],
   subsets: ["latin"],
   display: "swap",
 });
@@ -42,7 +51,8 @@ export default function RootLayout({
     // before React hydrates, so this one element legitimately differs from SSR.
     <html
       lang="en"
-      className={`${figtree.variable} ${anton.variable}`}
+      className={`${figtree.variable} ${anton.variable} ${plexMono.variable}`}
+      data-scroll-behavior="smooth"
       suppressHydrationWarning
     >
       <head>

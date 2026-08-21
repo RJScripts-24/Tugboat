@@ -36,7 +36,6 @@ export function SiteHeader() {
 
         <Link
           href="/login"
-          prefetch={false}
           className="btn-gold px-7 py-2.5 text-[15px] lg:px-8 lg:py-3 lg:text-[17px]"
         >
           Login

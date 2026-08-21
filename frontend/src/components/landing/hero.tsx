@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import {
   ArrowRightIcon,
   AuditDocIcon,
@@ -73,10 +75,10 @@ export function Hero() {
           </div>
 
           <div className="rise mt-9" style={{ animationDelay: "290ms" }}>
-            <a href="#demo" className="btn-gold group gap-5 px-7 py-[15px] text-[16px]">
+            <Link href="/login" className="btn-gold group gap-5 px-7 py-[15px] text-[16px]">
               See Tugboat in action
               <ArrowRightIcon className="h-[20px] w-[20px] transition-transform group-hover:translate-x-0.5" />
-            </a>
+            </Link>
           </div>
         </div>
 

@@ -3,6 +3,7 @@
 @theme {
   --font-display: var(--font-anton), "Arial Narrow", system-ui, sans-serif;
   --font-sans: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
 
   /* Night-harbour ink scale */
   --color-ink-950: #01040a;
@@ -31,6 +32,34 @@
   --color-decide: #4ade80;
   --color-execute: #4a90f0;
   --color-measure: #f0ac2a;
+
+  /* ---------------------------------------------------------------
+     Control Tower
+
+     A console palette, not a brand palette: five tones, each of which
+     means something. Anything that does not carry meaning is grey.
+     Green means recovered money and nothing else, ever.
+     --------------------------------------------------------------- */
+  --color-console: #030304;
+  --color-console-surface: transparent;
+  --color-console-raised: rgba(240, 236, 226, 0.04);
+
+  /* Chalk white is warm and never pure - a stick of chalk is limestone,
+     not a pixel. */
+  --color-txt: #fffdf8;
+  --color-txt-dim: #f6f3ec;
+  --color-txt-faint: #e4e0d6;
+
+  /* Coloured chalks, matched to the reference board: saturated pigment.
+     What keeps them off "neon" is the tooth eating into them, not
+     desaturation - washed-out colour just reads as a dull UI. */
+  --color-recovered: #adf894;
+  --color-waiting: #ffe886;
+  --color-halted: #ffa39e;
+  --color-diagnosis: #9aeaff;
+  --color-neutral: #f6f3ec;
+
+  --color-chalk-dust: rgba(240, 236, 226, 0.16);
 }
 
 @layer base {
@@ -295,3 +324,652 @@
     scroll-behavior: auto;
   }
 }
+
+/* ---------------------------------------------------------------
+   Numerals
+
+   Money must not jitter as digits change: every rupee figure, stat and
+   counter opts in to tabular figures.
+   --------------------------------------------------------------- */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ---------------------------------------------------------------
+   Ghost button — the quiet twin of .btn-gold
+
+   Same geometry and the same press travel, none of the gold. For the
+   second action on a page, which must be reachable without competing
+   with the primary one.
+   --------------------------------------------------------------- */
+.btn-ghost {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.015) 100%);
+  color: var(--color-cream);
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 2px 10px rgba(0, 0, 0, 0.35);
+  transition:
+    transform 150ms cubic-bezier(0.3, 0.7, 0.4, 1),
+    border-color 150ms ease,
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.btn-ghost:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--color-gold-500) 48%, transparent);
+  background: linear-gradient(180deg, rgba(240, 172, 42, 0.1) 0%, rgba(240, 172, 42, 0.03) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 10px 22px -12px rgba(240, 172, 42, 0.5);
+}
+
+.btn-ghost:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.btn-ghost:focus-visible {
+  outline: 2px solid #ffd76a;
+  outline-offset: 3px;
+}
+
+.btn-gold:disabled,
+.btn-ghost:disabled {
+  cursor: default;
+  opacity: 0.72;
+  transform: none;
+}
+
+/* ---------------------------------------------------------------
+   Auth backdrop
+
+   The login page is the same night harbour as the hero, reduced to its
+   light: two glows drifting on long, mismatched cycles (so they never
+   visibly loop together) over a slow tide at the bottom edge.
+   --------------------------------------------------------------- */
+.auth-glow {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(70px);
+  will-change: transform;
+}
+
+.auth-glow-lamp {
+  animation: glow-drift-lamp 22s ease-in-out infinite alternate;
+}
+
+.auth-glow-deep {
+  animation: glow-drift-deep 29s ease-in-out infinite alternate;
+}
+
+@keyframes glow-drift-lamp {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(-4%, 5%, 0) scale(1.13);
+  }
+}
+
+@keyframes glow-drift-deep {
+  from {
+    transform: translate3d(0, 0, 0) scale(1.08);
+  }
+  to {
+    transform: translate3d(6%, -4%, 0) scale(0.93);
+  }
+}
+
+/* Two identical wave tiles side by side; translating exactly -50% lands
+   tile two where tile one was, so the tide never seams. */
+.wave-band {
+  display: flex;
+  width: 200%;
+  height: 100%;
+}
+
+.wave-drift {
+  animation: wave-drift 34s linear infinite;
+  will-change: transform;
+}
+
+@keyframes wave-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+/* Wrong credentials: the card refuses, physically. */
+.shake {
+  animation: shake 480ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+@keyframes shake {
+  10%,
+  90% {
+    transform: translate3d(-2px, 0, 0);
+  }
+  20%,
+  80% {
+    transform: translate3d(4px, 0, 0);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translate3d(-7px, 0, 0);
+  }
+  40%,
+  60% {
+    transform: translate3d(7px, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-glow-lamp,
+  .auth-glow-deep,
+  .wave-drift,
+  .shake {
+    animation: none;
+  }
+
+  .btn-ghost,
+  .btn-ghost:hover,
+  .btn-ghost:active {
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------
+   Sign-in fits the viewport, always
+
+   The page must never scroll, so the card tightens as the window gets
+   shorter instead of the page growing a scrollbar. Four steps, driven
+   by height alone: the 1366x768 laptop in the demo, a 900px desktop
+   and a phone all land inside the fold.
+   --------------------------------------------------------------- */
+.auth-page {
+  height: 100svh;
+  overflow: hidden;
+  --auth-pad: 48px;
+  --auth-logo: 58px;
+  --auth-card-pad: 30px;
+  --auth-title: 40px;
+  --auth-step: 20px;
+  --auth-gap: 18px;
+  --auth-field: 13px;
+}
+
+@media (max-height: 900px) {
+  .auth-page {
+    --auth-pad: 26px;
+    --auth-logo: 48px;
+    --auth-card-pad: 25px;
+    --auth-title: 34px;
+    --auth-step: 15px;
+    --auth-gap: 13px;
+    --auth-field: 12px;
+  }
+}
+
+@media (max-height: 780px) {
+  .auth-page {
+    --auth-pad: 14px;
+    --auth-logo: 40px;
+    --auth-card-pad: 21px;
+    --auth-title: 29px;
+    --auth-step: 11px;
+    --auth-gap: 9px;
+    --auth-field: 10px;
+  }
+}
+
+@media (max-height: 660px) {
+  .auth-page {
+    --auth-pad: 8px;
+    --auth-card-pad: 17px;
+    --auth-title: 25px;
+    --auth-step: 8px;
+    --auth-gap: 6px;
+    --auth-field: 8px;
+  }
+
+  /* Last to go: the wordmark is decoration, the form is the page. */
+  .auth-brand {
+    display: none;
+  }
+}
+
+@media (max-height: 600px) {
+  .auth-footnote {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------
+   The slate
+
+   The whole Control Tower is one board. Not a dark page with dark
+   cards on it - a single sheet of charcoal slate that the sidebar,
+   the header and every panel are simply regions of.
+
+   Built from three cheap, static layers: a cool charcoal ground, a
+   fine mineral grain, and a few enormous soft blooms standing in for
+   places the board has been wiped. No image assets, no animation,
+   nothing that repaints.
+   --------------------------------------------------------------- */
+:root {
+  /* A real blackboard is neutral and near-black, not navy and not
+     charcoal grey: dark enough that chalk pops off it, light enough
+     that you can see it is a surface. */
+  --slate-base: #030304;
+
+  /* Board tooth. Fine and clearly present - on the reference board the
+     grain is visible, and it is what every chalk mark breaks against. */
+  --slate-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.85 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23s)'/%3E%3C/svg%3E");
+
+  /* The tooth every mark on the board breaks against. Black with a
+     varying alpha so it can be multiplied over the page: it darkens
+     chalk in a fine speckle and leaves a near-black board untouched. */
+  --chalk-speckle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.1 -0.15'/%3E%3C/filter%3E%3Crect width='150' height='150' filter='url(%23p)'/%3E%3C/svg%3E");
+
+  /* Slow tonal drift, so the board is never one flat value. */
+  --slate-blotch: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='700' height='700'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.006' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='700' height='700' filter='url(%23b)'/%3E%3C/svg%3E");
+
+  /* Chalk tooth for glyphs. Fine specks so small type is softened
+     rather than punched full of holes - erosion is capped low on
+     purpose, because a number nobody can read is not a number. */
+  --chalk-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='c'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.95' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 -0.5 1'/%3E%3C/filter%3E%3Crect width='80' height='80' filter='url(%23c)'/%3E%3C/svg%3E");
+
+  /* Coarser tooth for drawn strokes, which break harder than glyphs. */
+  --chalk-grain-coarse: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='k'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.6' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 -0.78 1'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23k)'/%3E%3C/svg%3E");
+}
+
+.slate {
+  position: relative;
+  background-color: var(--slate-base);
+  background-image:
+    /* wiped patches, where a cloth went over the board */
+    radial-gradient(85% 55% at 22% 12%, rgba(240, 236, 226, 0.038) 0%, transparent 62%),
+    radial-gradient(70% 48% at 84% 40%, rgba(240, 236, 226, 0.026) 0%, transparent 64%),
+    radial-gradient(110% 60% at 55% 96%, rgba(240, 236, 226, 0.028) 0%, transparent 60%),
+    linear-gradient(158deg, #070709 0%, #030304 48%, #000000 100%);
+  background-attachment: fixed;
+}
+
+/*
+ * Two overlays, both fixed, both inert to the pointer, neither taking
+ * part in layout - an earlier pass forced `position: relative` onto
+ * every child to stack them and silently broke the fixed sidebar.
+ *
+ * ::before is the slow tonal drift, ::after is the tooth.
+ */
+.slate::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--slate-blotch);
+  background-size: 700px 700px;
+  opacity: 0.5;
+  mix-blend-mode: soft-light;
+}
+
+.slate::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  background-image: var(--chalk-speckle);
+  background-size: 150px 150px;
+  opacity: 0.42;
+  mix-blend-mode: multiply;
+}
+
+/* ---------------------------------------------------------------
+   Chalk as a material
+
+   The tooth is applied ONCE, as a single multiply layer over the whole
+   board (.slate::after above), rather than as a mask on each piece of
+   text.
+
+   The per-element version could not be made consistent: `:has()` had
+   to be used to find leaf text nodes so a mask never landed on the
+   same glyph twice, which meant a <td> holding a bare number got the
+   tooth and a <td> wrapping its number in a <span> did not. Half the
+   table came out chalky and half came out clean. One layer over
+   everything is uniform by construction - every mark on the board,
+   whatever element drew it, breaks against the same grain.
+
+   What is left here is pigment and dust halo.
+   --------------------------------------------------------------- */
+.chalk {
+  /* Inherited by the whole console. */
+  text-shadow:
+    0 0 1px rgba(255, 253, 248, 0.6),
+    0 0 7px rgba(255, 253, 248, 0.2);
+}
+
+.chalk-strong {
+  text-shadow:
+    0 0 1px rgba(255, 253, 248, 0.7),
+    0 0 10px rgba(255, 253, 248, 0.24),
+    0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* Artwork and controls sit ON the board, above the tooth. */
+.slate :where(img),
+.slate :where(.btn-gold, .btn-op-quiet, button) {
+  position: relative;
+  z-index: 61;
+}
+
+/* The hand. Labels, headings and annotations are lettered; figures,
+   ids and timestamps stay in the tabular faces so columns still line
+   up and digits stay unambiguous. */
+.chalk-hand {
+  font-family: var(--font-chalk), var(--font-sans);
+  letter-spacing: 0.015em;
+}
+
+.slate .surface-title,
+.slate .optable th,
+.slate .nav-label {
+  font-family: var(--font-chalk), var(--font-sans);
+  letter-spacing: 0.06em;
+  font-weight: 400;
+}
+
+/* A drawn rule: dense where the stick pressed, faint where it lifted. */
+.chalk-rule {
+  height: 2px;
+  border: 0;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 253, 248, 0.78) 5%,
+    rgba(255, 253, 248, 0.5) 46%,
+    rgba(255, 253, 248, 0.72) 88%,
+    transparent 100%
+  );
+}
+
+/*
+ * Controls are the one thing on the board that is not chalk.
+ *
+ * The console inherits the landing page's extruded gold button exactly
+ * as-is - same bevel, same wall, same travel - so a control looks and
+ * behaves identically wherever it appears in the product. All this
+ * block does is keep the board's chalk treatment off it: no glyph
+ * mask, no dust halo, no inherited pigment.
+ */
+.slate :where(img) {
+  -webkit-mask-image: none !important;
+  mask-image: none !important;
+}
+
+.slate :where(.btn-gold, .btn-op-quiet, button),
+.slate :where(.btn-gold, .btn-op-quiet, button) :where(span, svg) {
+  -webkit-mask-image: none !important;
+  mask-image: none !important;
+}
+
+.slate :where(.btn-op-quiet, button),
+.slate :where(.btn-op-quiet, button) :where(span) {
+  text-shadow: none;
+}
+
+/* The hand. Labels, headings and annotations are lettered; figures,
+   ids and timestamps stay in the tabular faces so columns still line
+   up and digits stay unambiguous. */
+.chalk-hand {
+  font-family: var(--font-chalk), var(--font-sans);
+  letter-spacing: 0.015em;
+}
+
+.slate .surface-title,
+.slate .optable th,
+.slate .nav-label {
+  font-family: var(--font-chalk), var(--font-sans);
+  letter-spacing: 0.06em;
+  font-weight: 400;
+}
+
+/* A drawn rule: dense where the stick pressed, faint where it lifted. */
+.chalk-rule {
+  height: 2px;
+  border: 0;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(252, 249, 242, 0.6) 5%,
+    rgba(252, 249, 242, 0.34) 46%,
+    rgba(252, 249, 242, 0.55) 88%,
+    transparent 100%
+  );
+  -webkit-mask-image: var(--chalk-grain-coarse);
+  mask-image: var(--chalk-grain-coarse);
+  -webkit-mask-size: 120px 120px;
+  mask-size: 120px 120px;
+}
+
+/* ---------------------------------------------------------------
+   Regions of the board
+
+   Not cards. No fill, no shadow, no lift - a panel is an area of
+   slate with a chalk boundary drawn round it, so the board reads as
+   continuous underneath everything.
+   --------------------------------------------------------------- */
+.surface {
+  position: relative;
+  border: 1px solid rgba(255, 253, 248, 0.22);
+  border-radius: 2px;
+  background: transparent;
+}
+
+.surface-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 16px;
+}
+
+.surface-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-txt);
+  font-size: 13px;
+}
+
+.meta {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-txt-faint);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------
+   Tables, written out rather than boxed
+
+   No cell borders, no striping, no filled header band. Columns are
+   held by alignment and a ruled line under the headings - the way a
+   table gets drawn on a board when someone needs it to be read, not
+   rendered.
+   --------------------------------------------------------------- */
+.optable {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.optable th {
+  padding: 9px 14px;
+  border-bottom: 1px solid transparent;
+  border-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 253, 248, 0.55) 4%,
+      rgba(255, 253, 248, 0.34) 50%,
+      rgba(255, 253, 248, 0.5) 96%,
+      transparent 100%
+    )
+    1;
+  border-image-slice: 1;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-txt-faint);
+  text-align: left;
+  white-space: nowrap;
+  text-shadow: 0 0 1px rgba(255, 253, 248, 0.4);
+}
+
+.optable td {
+  padding: 11px 14px;
+  border-bottom: 1px solid rgba(255, 253, 248, 0.09);
+  font-size: 13px;
+  color: var(--color-txt-dim);
+  white-space: nowrap;
+  text-shadow: 0 0 1px rgba(255, 253, 248, 0.35);
+}
+
+.optable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Chalk dust brushed across the row, not a grey fill. */
+.optable tbody tr:hover td {
+  background: rgba(255, 253, 248, 0.06);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------
+   Console controls
+
+   The primary action keeps the landing page's extruded gold (.btn-gold):
+   it is the one place the console is allowed to look like the brand, and
+   an operator should feel the page's most consequential button. Secondary
+   actions stay flat and quiet.
+   --------------------------------------------------------------- */
+.btn-op-quiet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-txt-dim);
+  transition:
+    border-color 130ms ease,
+    color 130ms ease,
+    background-color 130ms ease;
+}
+
+.btn-op-quiet:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--color-txt);
+}
+
+/* ---------------------------------------------------------------
+   Live signals
+
+   Two, and only two: a new log line arriving, and the duty light.
+   --------------------------------------------------------------- */
+.feed-enter {
+  animation: feed-enter 320ms ease-out both;
+}
+
+@keyframes feed-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.pulse-dot {
+  animation: pulse-dot 2.6s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.scroll-thin::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feed-enter,
+  .pulse-dot {
+    animation: none;
+  }
+}
+
+/* Chalk strokes: tooth on the mark itself, so a drawn line is dusty
+   rather than merely wobbly. */
+/*
+ * Drawn strokes carry no mask of their own.
+ *
+ * They used to, and stacking that on top of the board's multiply layer
+ * ate them down to hairlines - two erosions compounding on the same
+ * mark. One tooth layer for the whole board, applied once, is the
+ * whole point: consistent by construction and impossible to
+ * double-apply.
+ */
