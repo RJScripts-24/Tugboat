@@ -23,8 +23,7 @@ import {
   type AuditEntry,
   type CaseDetail,
 } from "@/lib/case-detail-data";
-
-export type Override = "paused" | "escalated" | "resolved" | null;
+import type { CaseState, OverrideKind } from "@/lib/event-store";
 
 /**
  * The right column: what this case ended up worth, what it cost to get there,
@@ -39,23 +38,24 @@ export type Override = "paused" | "escalated" | "resolved" | null;
 export function CaseLedger({
   detail,
   extraAudit,
-  override,
+  state,
   onOverride,
 }: {
   detail: CaseDetail;
-  /** Ledger rows written by work that landed while the page was open. */
+  /** Ledger rows written since the page opened - scheduled work and overrides. */
   extraAudit: AuditEntry[];
-  override: Override;
-  onOverride: (next: Override) => void;
+  /** Folded from the event log, never from a flag this component owns. */
+  state: CaseState;
+  onOverride: (kind: OverrideKind) => void;
 }) {
   const rows = [...detail.audit, ...extraAudit];
 
   return (
     <div className="space-y-3 self-start">
-      <OutcomeCard detail={detail} override={override} />
+      <OutcomeCard detail={detail} state={state} />
       <CostCard detail={detail} />
       <AuditPanel caseId={detail.record.id} rows={rows} />
-      <Overrides override={override} onOverride={onOverride} stage={detail.record.stage} />
+      <Overrides state={state} onOverride={onOverride} stage={detail.record.stage} />
     </div>
   );
 }
@@ -64,21 +64,54 @@ export function CaseLedger({
 /* Outcome                                                             */
 /* ------------------------------------------------------------------ */
 
-function OutcomeCard({ detail, override }: { detail: CaseDetail; override: Override }) {
+function OutcomeCard({ detail, state }: { detail: CaseDetail; state: CaseState }) {
   const { outcome, record } = detail;
-  const stage = STAGE_META[record.stage];
   const recovered = record.stage === "recovered";
   const share = outcome.atRiskPaise === 0 ? 0 : outcome.recoveredPaise / outcome.atRiskPaise;
 
+  /*
+   * An override changes the outcome, not just the note underneath it.
+   *
+   * The card used to render the seeded stage whatever had happened, so a case
+   * marked resolved outside Tugboat still read "Committed · ₹18,400 still in
+   * flight" - the single most damaging thing this page could say, because the
+   * page exists to be the truthful account of one case.
+   */
+  const stageLabel = state.resolvedExternally
+    ? "Closed externally"
+    : state.takenByHuman
+      ? "With you"
+      : state.paused
+        ? "Paused"
+        : STAGE_META[record.stage].label;
+
+  const headline = state.resolvedExternally
+    ? "Resolved outside Tugboat"
+    : state.takenByHuman
+      ? "Handed to you"
+      : state.paused
+        ? "Paused by you"
+        : outcome.headline;
+
+  const detailLine = state.resolvedExternally
+    ? "Closed by a human, not by the agent. Nothing further will be attempted and no money is counted as recovered here."
+    : state.takenByHuman
+      ? "Boa has stood down. The case is yours until you release it."
+      : state.paused
+        ? "Boa is stood down on this case. Scheduled work will not run until you resume it."
+        : outcome.detail;
+
   return (
-    <Section title="Outcome" meta={stage.label} bodyClassName="px-5 py-4">
+    <Section title="Outcome" meta={stageLabel} bodyClassName="px-5 py-4">
       <p
         className="chalk-strong text-[clamp(20px,1.8vw,25px)] font-semibold leading-none tracking-[-0.015em]"
-        style={{ color: recovered ? TONE_HEX.recovered : "var(--color-txt)" }}
+        style={{
+          color: recovered && !state.resolvedExternally ? TONE_HEX.recovered : "var(--color-txt)",
+        }}
       >
-        {outcome.headline}
+        {headline}
       </p>
-      <p className="mt-2 text-[12.5px] leading-[1.55] text-txt-dim">{outcome.detail}</p>
+      <p className="mt-2 text-[12.5px] leading-[1.55] text-txt-dim">{detailLine}</p>
 
       <ChalkRule className="my-3.5" />
 
@@ -89,10 +122,16 @@ function OutcomeCard({ detail, override }: { detail: CaseDetail; override: Overr
           value={
             <MoneyValue
               paise={outcome.recoveredPaise}
-              className={recovered ? "text-recovered" : "text-txt-faint"}
+              className={recovered && !state.resolvedExternally ? "text-recovered" : "text-txt-faint"}
             />
           }
-          note={recovered ? `${formatPercent(share, 0)} of the amount at risk` : undefined}
+          note={
+            state.resolvedExternally
+              ? "settled elsewhere · not counted as agent recovery"
+              : recovered
+                ? `${formatPercent(share, 0)} of the amount at risk`
+                : undefined
+          }
         />
         <Line
           label="Attempts"
@@ -107,9 +146,9 @@ function OutcomeCard({ detail, override }: { detail: CaseDetail; override: Overr
         ) : null}
       </dl>
 
-      {override ? <OverrideNote override={override} /> : null}
+      {state.last ? <OverrideNote last={state.last} appended={state.appended} /> : null}
 
-      {record.stage === "escalated" && !override ? (
+      {record.stage === "escalated" && state.last === null ? (
         <Link href="/approvals" className="disclose mt-3.5">
           This case is waiting in the approvals queue →
         </Link>
@@ -118,16 +157,20 @@ function OutcomeCard({ detail, override }: { detail: CaseDetail; override: Overr
   );
 }
 
-function OverrideNote({ override }: { override: Exclude<Override, null> }) {
+function OverrideNote({ last, appended }: { last: OverrideKind; appended: number }) {
   const copy = {
-    paused: "You paused Boa on this case. Nothing further will be sent until it is resumed.",
-    escalated: "You took this case. Boa has stood down and the approvals queue holds it.",
-    resolved: "Marked resolved outside Tugboat. The case is closed and no action will follow.",
-  }[override];
+    pause: "You paused Boa on this case. Nothing further will be sent until it is resumed.",
+    resume: "You resumed Boa. The pause is still on the ledger — it was appended over, not undone.",
+    escalate: "You took this case. Boa has stood down and the approvals queue holds it.",
+    resolve: "Marked resolved outside Tugboat. The case is closed and no action will follow.",
+  }[last];
 
   return (
     <p className="mt-3.5 border-l-2 border-waiting/60 pl-3 text-[12px] leading-[1.55] text-txt-dim">
-      {copy} An override row was written to the ledger.
+      {copy}{" "}
+      {appended === 1
+        ? "One row was appended to this case's chain."
+        : `${appended} rows have been appended to this case's chain this session.`}
     </p>
   );
 }
@@ -356,34 +399,38 @@ function AuditRow({ row }: { row: AuditEntry }) {
  * than only saying so.
  */
 function Overrides({
-  override,
+  state,
   onOverride,
   stage,
 }: {
-  override: Override;
-  onOverride: (next: Override) => void;
+  state: CaseState;
+  onOverride: (kind: OverrideKind) => void;
   stage: string;
 }) {
   const closed = stage === "recovered" || stage === "halted" || stage === "exhausted";
+  // Resolving externally is terminal. Everything else stays available, because
+  // an append-only log has no reason to forbid a second pause - it just
+  // records one.
+  const done = state.resolvedExternally;
 
   return (
     <Section title="Human override" bodyClassName="px-5 py-4">
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => onOverride(override === "paused" ? null : "paused")}
+          onClick={() => onOverride(state.paused ? "resume" : "pause")}
           className="btn-op-quiet"
-          disabled={closed || override === "escalated" || override === "resolved"}
+          disabled={closed || done}
         >
           <PauseIcon className="h-[11px] w-[11px]" />
-          {override === "paused" ? "Resume agent" : "Pause agent on this case"}
+          {state.paused ? "Resume agent" : "Pause agent on this case"}
         </button>
 
         <button
           type="button"
-          onClick={() => onOverride("escalated")}
+          onClick={() => onOverride("escalate")}
           className="btn-op-quiet"
-          disabled={closed || override !== null}
+          disabled={closed || done || state.takenByHuman}
         >
           <EscalateIcon className="h-[11px] w-[11px]" />
           Escalate to me
@@ -391,9 +438,9 @@ function Overrides({
 
         <button
           type="button"
-          onClick={() => onOverride("resolved")}
+          onClick={() => onOverride("resolve")}
           className="btn-op-quiet"
-          disabled={override === "resolved"}
+          disabled={done}
         >
           <RecoveredIcon className="h-[11px] w-[11px]" />
           Mark resolved externally
@@ -401,9 +448,11 @@ function Overrides({
       </div>
 
       <p className="mt-3 text-[11.5px] leading-[1.55] text-txt-faint">
-        {closed
-          ? "This case has already closed, so only an external resolution can still be recorded against it."
-          : "Every override is written to the ledger with the operator who made it. The agent has no way to undo one."}
+        {done
+          ? "This case was closed outside Tugboat. Its chain stays open to read and is closed to writes."
+          : closed
+            ? "This case has already closed, so only an external resolution can still be recorded against it."
+            : "Every override appends a row to this case's chain, with the operator who made it. Resuming appends a resume — nothing here can unwrite what is already on the ledger."}
       </p>
     </Section>
   );

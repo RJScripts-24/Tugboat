@@ -40,11 +40,26 @@ export default function ControlTowerPage() {
 
   return (
     <div className="space-y-3">
-      {/* Run context, then the one action this page offers. */}
+      {/*
+        Run context, then the one action this page offers.
+
+        The banner is not decoration. These figures move while you watch - the
+        activity feed replays, cases change stage, the recovered counter ticks -
+        and the Simulation Lab's do not, because that is a fixed run of a fixed
+        seed. A judge who sees 44.7% here and 44.7% there on Monday and
+        different numbers on Tuesday needs to know which of the two was
+        supposed to move.
+      */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="mono text-[12px] text-txt-faint">
-          seed {status.seed} · 214 seeded cases · {status.playbooks} playbooks active · policy{" "}
-          {status.policyVersion}
+        <p className="mono flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-txt-faint">
+          <span className="inline-flex items-center gap-1.5 rounded-[2px] border border-[rgba(255,232,134,0.32)] px-2 py-[2px] text-waiting">
+            <span className="pulse-dot h-[5px] w-[5px] rounded-full bg-waiting" aria-hidden />
+            LIVE DEMO STREAM
+          </span>
+          <span>
+            seed {status.seed} · 214 seeded cases · {status.playbooks} playbooks active · policy{" "}
+            {status.policyVersion} · figures move as work lands
+          </span>
         </p>
 
         <Link href="/simulation" className="btn-gold gap-2.5 px-6 py-[11px] text-[14.5px]">

@@ -17,9 +17,11 @@ import { preciseStampOf } from "@/lib/clock";
 import {
   ACTOR_META,
   ACTOR_ORDER,
+  summarise,
   type LedgerRow,
   type LedgerSummary,
 } from "@/lib/audit-data";
+import { useSessionEvents } from "@/lib/event-store";
 import { chainsOf, verifyChain } from "@/lib/ledger-verify";
 import { EMPTY_FILTERS, FilterBar, RANGES, type AuditFilters } from "./filter-bar";
 import { LedgerTable } from "./ledger-table";
@@ -47,8 +49,8 @@ const CHAINS_PER_FRAME = 5;
  * shape; only where `rows` comes from changes.
  */
 export function AuditExplorer({
-  rows,
-  summary,
+  rows: served,
+  summary: servedSummary,
   index,
   nowMs,
   initialCase,
@@ -61,6 +63,34 @@ export function AuditExplorer({
   /** `?case=C-1042`, so Case Detail and Approvals can point at their own rows. */
   initialCase: string | null;
 }) {
+  /*
+   * Server rows plus everything written this session, as one list.
+   *
+   * Approvals and overrides used to be invisible here - a merchant could
+   * approve a discount and find no row for it on the page whose whole job is
+   * to have one. Session events are chained and digested exactly like served
+   * rows, so they merge, sort, filter and verify without special-casing.
+   */
+  const session = useSessionEvents();
+  const rows = useMemo(
+    () =>
+      session.length === 0
+        ? served
+        : [...served, ...session].sort((a, b) =>
+            b.atMs === a.atMs
+              ? a.chain === b.chain
+                ? b.seq - a.seq
+                : a.chain.localeCompare(b.chain)
+              : b.atMs - a.atMs,
+          ),
+    [served, session],
+  );
+
+  const summary = useMemo(
+    () => (session.length === 0 ? servedSummary : summarise(rows)),
+    [session.length, servedSummary, rows],
+  );
+
   const [filters, setFilters] = useState<AuditFilters>(() =>
     initialCase ? { ...EMPTY_FILTERS, q: initialCase } : EMPTY_FILTERS,
   );

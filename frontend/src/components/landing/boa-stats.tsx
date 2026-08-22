@@ -1,5 +1,9 @@
 import Image from "next/image";
+import Link from "next/link";
 import type { ComponentType, SVGProps } from "react";
+
+import { formatPercent, formatRupeesCompact } from "@/lib/money";
+import { getGrading, getHeadline } from "@/lib/simulation-data";
 import { ClockIcon, RupeeCircleIcon, ShieldSolidIcon, UsersSolidIcon } from "./icons";
 import { Reveal } from "./reveal";
 
@@ -10,14 +14,56 @@ type Stat = {
   tone: string;
 };
 
-const STATS: Stat[] = [
-  { value: "₹3.24 Cr+", label: "Revenue Recovered", Icon: RupeeCircleIcon, tone: "#8b8bf5" },
-  { value: "32,841+", label: "Cases Resolved", Icon: ShieldSolidIcon, tone: "#4a90f0" },
-  { value: "3,200+", label: "Merchants Trust Tugboat", Icon: UsersSolidIcon, tone: "#8b8bf5" },
-  { value: "99.9%", label: "Uptime", Icon: ClockIcon, tone: "#8b8bf5" },
-];
+/**
+ * Four numbers, and every one of them checkable.
+ *
+ * This row used to read "₹3.24 Cr+ recovered · 32,841 cases · 3,200 merchants
+ * trust Tugboat · 99.9% uptime". None of that was true. Tugboat has no
+ * merchants, no production traffic and no uptime history, and a panel from a
+ * payments company is precisely the audience most likely to ask for the
+ * source - at which point every real number on the site becomes suspect too.
+ *
+ * What replaces them is the pinned evidence run: the same seeded batch the
+ * Simulation Lab reports, read from the same module, so the landing page
+ * cannot drift from the report behind it. A visitor can rerun the seed and get
+ * these figures back.
+ */
+function stats(): Stat[] {
+  const headline = getHeadline();
+  const grading = getGrading();
+
+  return [
+    {
+      value: formatPercent(headline.recoveryRate),
+      label: "Of at-risk revenue recovered",
+      Icon: RupeeCircleIcon,
+      tone: "#8b8bf5",
+    },
+    {
+      value: `+${headline.upliftPoints.toFixed(1)} pts`,
+      label: "Uplift over the same batch, agent off",
+      Icon: ShieldSolidIcon,
+      tone: "#4a90f0",
+    },
+    {
+      value: formatPercent(grading.accuracy),
+      label: "Diagnoses correct vs ground truth",
+      Icon: UsersSolidIcon,
+      tone: "#8b8bf5",
+    },
+    {
+      value: `₹${formatRupeesCompact(headline.atRiskPaise)}`,
+      label: "At risk in the batch measured",
+      Icon: ClockIcon,
+      tone: "#8b8bf5",
+    },
+  ];
+}
 
 export function BoaStats() {
+  const headline = getHeadline();
+  const STATS = stats();
+
   return (
     <section id="product" className="relative bg-[#050e19] pb-14 lg:pb-[52px]">
       <div className="shell">
@@ -79,6 +125,19 @@ export function BoaStats() {
                 </div>
               ))}
             </dl>
+
+            {/* Where the numbers come from, next to the numbers. */}
+            <p className="mt-8 text-center text-[13.5px] leading-[1.6] text-[#7d879a] md:mt-7">
+              Measured on a pinned evidence run — seed 42, {headline.cases} synthetic cases, graded
+              against ground truth. Not production figures: Tugboat has no live merchants yet.{" "}
+              <Link
+                href="/simulation"
+                className="text-[#9aa8bd] underline underline-offset-[3px] transition-colors hover:text-white"
+              >
+                Rerun the seed and download the report
+              </Link>
+              .
+            </p>
           </Reveal>
         </div>
       </div>

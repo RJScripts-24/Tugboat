@@ -20,6 +20,7 @@
  */
 
 import { getApprovalStats } from "./approvals-data";
+import { getLedgerSize } from "./audit-data";
 import { getKpis } from "./dashboard-data";
 import {
   CASE_TYPE_META,
@@ -571,7 +572,16 @@ export function getCompliance(): {
   const fired = (key: string) => rules.find((rule) => rule.key === key)?.fired ?? 0;
 
   return {
-    entries: 4_318,
+    /*
+     * The ledger's actual size, counted from it.
+     *
+     * This was a hardcoded 4,318 while the Audit Explorer - reading the same
+     * 214 cases - reported 1,885. Two numbers for one ledger is exactly the
+     * kind of contradiction that makes a panel stop believing the rest of the
+     * report, and a compliance figure derived from the audit trail has to
+     * actually be derived from the audit trail.
+     */
+    entries: getLedgerSize(),
     verified: true,
     assertions: [
       {

@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 
 import { PoliciesView } from "@/components/policies/policies-view";
 import { getPendingApprovals } from "@/lib/approvals-data";
+import { getChainTip, getLedgerSize } from "@/lib/audit-data";
 import { DEMO_MERCHANT } from "@/lib/demo-merchant";
 import { getPolicyPack, getRevisions, POLICY_VERSION } from "@/lib/policies-data";
-import { getCompliance, getRuleFirings } from "@/lib/simulation-data";
+import { getRuleFirings } from "@/lib/simulation-data";
 
 export const metadata: Metadata = {
   title: "Policies & Guardrails — Tugboat",
@@ -46,8 +47,13 @@ export default function PoliciesPage() {
       revisions={getRevisions()}
       firings={firings}
       queue={queue}
-      ledgerEntries={getCompliance().entries}
+      // The live ledger's own size, counted from it. The figure used to come
+      // from the simulation's compliance block, which describes a different
+      // ledger entirely - hence this page claiming 4,318 while the Audit
+      // Explorer showed 1,885.
+      ledgerEntries={getLedgerSize()}
       merchantName={DEMO_MERCHANT.displayName}
+      tip={getChainTip("policy")}
     />
   );
 }

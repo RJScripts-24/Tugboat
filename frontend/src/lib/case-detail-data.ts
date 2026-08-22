@@ -1772,30 +1772,14 @@ export function extendAudit(
   });
 }
 
-/** A human reached in and changed something. Same chain, different actor. */
-export function overrideAuditRow(
-  caseId: string,
-  base: AuditEntry[],
-  override: "paused" | "escalated" | "resolved",
-): AuditEntry {
-  const prev = base.length > 0 ? base[base.length - 1].hash : "0".repeat(10);
-  const seq = base.length + 1;
-  const action = {
-    paused: "AGENT_PAUSED_BY_HUMAN",
-    escalated: "ESCALATED_BY_HUMAN",
-    resolved: "RESOLVED_EXTERNALLY",
-  }[override];
-
-  return {
-    seq,
-    hash: hex(`${caseId}|${seq - 1}|${action}|${prev}`, 10),
-    prevHash: prev,
-    actor: "HUMAN",
-    action,
-    minutesAgo: 0,
-    detail: `Operator override · ${action.toLowerCase().replace(/_/g, " ")}`,
-  };
-}
+/*
+ * Overrides are no longer built here.
+ *
+ * `overrideAuditRow` used to synthesise one row from a single piece of
+ * component state, which meant a second override replaced the first rather
+ * than following it. Human events are appended to `lib/event-store` now, on
+ * the same chain and with the same digest - see that module's note.
+ */
 
 /* ------------------------------------------------------------------ */
 /* Cost                                                                */

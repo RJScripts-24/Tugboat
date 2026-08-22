@@ -12,6 +12,8 @@ import {
   type ApprovalStats,
 } from "@/lib/approvals-data";
 import { setPendingApprovals } from "@/lib/approvals-live";
+import type { ChainTip } from "@/lib/audit-data";
+import { appendEvent } from "@/lib/event-store";
 import { formatLatency, formatSpan } from "@/lib/clock";
 import { DEMO_MERCHANT } from "@/lib/demo-merchant";
 import { formatPercent } from "@/lib/money";
@@ -53,12 +55,15 @@ export function ApprovalsView({
   history,
   live,
   stats,
+  tips,
 }: {
   pending: ApprovalRequest[];
   history: ApprovalHistoryRow[];
   /** The escalation that lands mid-demo, or null if its case is not in the batch. */
   live: ApprovalRequest | null;
   stats: ApprovalStats;
+  /** Where each case's ledger chain ends, so a decision can be appended to it. */
+  tips: Record<string, ChainTip>;
 }) {
   const [tab, setTab] = useState<"pending" | "history">("pending");
   const [sort, setSort] = useState<SortKey>("value");
@@ -128,6 +133,38 @@ export function ApprovalsView({
         [request.id]: { verdict, reason, at, edited },
       }));
 
+      /*
+       * The decision goes on the ledger, not only into this component.
+       *
+       * It used to live in `decisions` alone, which meant a merchant could
+       * approve a discount and find no trace of it in the Audit Explorer -
+       * the one page whose entire purpose is to have a trace of it. Appending
+       * here puts the row on the case's own chain, where Case Detail and the
+       * Audit Explorer both read it.
+       */
+      appendEvent({
+        chain: request.caseId,
+        caseId: request.caseId,
+        actor: "HUMAN",
+        action: "APPROVAL_DECIDED",
+        detail:
+          verdict === "approved"
+            ? `Approved · ${request.headline}`
+            : `Rejected · ${reason ?? "no reason given"}`,
+        tip: tips[request.caseId],
+        payload: {
+          case_id: request.caseId,
+          gate: request.gate,
+          decision: verdict === "approved" ? "APPROVED" : "REJECTED",
+          decided_by: DEMO_MERCHANT.displayName,
+          reason,
+          draft_edited: edited,
+          concession_paise: verdict === "approved" ? request.concessionPaise : 0,
+          attempt: request.attempts,
+          attempt_cap: request.attemptCap,
+        },
+      });
+
       pushToast(
         verdict === "approved"
           ? {
@@ -144,7 +181,7 @@ export function ApprovalsView({
             },
       );
     },
-    [pushToast],
+    [pushToast, tips],
   );
 
   /** Session decisions, shaped as history rows so one table renders both. */

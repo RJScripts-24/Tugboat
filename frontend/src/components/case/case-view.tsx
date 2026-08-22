@@ -1,19 +1,48 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ChevronRightIcon } from "@/components/dashboard/icons";
+import type { ChainTip } from "@/lib/audit-data";
 import {
   CLOCK_ANCHOR_LABEL,
   extendAudit,
-  overrideAuditRow,
+  type AuditEntry,
   type CaseDetail,
   type EventKind,
 } from "@/lib/case-detail-data";
+import {
+  OVERRIDE_ACTIONS,
+  appendEvent,
+  caseStateOf,
+  useSessionEvents,
+  usePolicyVersion,
+  type OverrideKind,
+} from "@/lib/event-store";
 import { CaseFacts } from "./case-facts";
-import { CaseLedger, type Override } from "./case-ledger";
+import { CaseLedger } from "./case-ledger";
 import { CaseTimeline } from "./case-timeline";
+
+/** What each override writes, and what the ledger row says it did. */
+const OVERRIDE_COPY: Record<OverrideKind, { detail: string; outcome: string }> = {
+  pause: {
+    detail: "Operator paused the agent on this case",
+    outcome: "No further action will be planned until a human resumes it",
+  },
+  resume: {
+    detail: "Operator resumed the agent on this case",
+    outcome: "Scheduled work may run again, inside the same bounds as before",
+  },
+  escalate: {
+    detail: "Operator took the case off the agent",
+    outcome: "Agent stood down · the case is worked by a named human",
+  },
+  resolve: {
+    detail: "Operator marked the case resolved outside Tugboat",
+    outcome: "Case closed · no money counted as agent recovery",
+  },
+};
 
 /** How long the next scheduled node takes to land, in the demo's clock. */
 const ARRIVAL_MS = 7_400;
@@ -50,15 +79,27 @@ export function CaseView({
   detail,
   neighbours,
   batchSize,
+  tip,
+  policyVersion,
 }: {
   detail: CaseDetail;
   neighbours: { prev: string | null; next: string | null };
   batchSize: number;
+  /** Where this case's chain stood on the server, so appends continue it. */
+  tip: ChainTip;
+  policyVersion: string;
 }) {
   const { record, pending } = detail;
 
-  const [override, setOverride] = useState<Override>(null);
-  const revealed = useArrivals(pending.length, override !== null);
+  // The one source of truth for what has happened to this case this session.
+  const session = useSessionEvents();
+  const state = useMemo(() => caseStateOf(session, record.id), [session, record.id]);
+  const policy = usePolicyVersion(policyVersion);
+
+  // A paused or closed case stops receiving scheduled work. A resume lets it
+  // continue - which is only possible now that resuming is its own event
+  // rather than the absence of a pause.
+  const revealed = useArrivals(pending.length, state.paused || state.resolvedExternally);
 
   // Attempts are spent by the action node, not by planning one.
   const landedActions = pending
@@ -68,17 +109,77 @@ export function CaseView({
   const attemptsUsed = Math.min(record.attemptCap, record.attempts + landedActions.length);
   const extraChannel = landedActions.length > 0 ? CHANNEL_OF[landedActions[0].kind] ?? null : null;
 
+  /** Scheduled work that has landed since the page opened. */
+  const arrived = useMemo(
+    () => extendAudit(record.id, detail.audit, pending.slice(0, revealed)),
+    [record.id, detail.audit, pending, revealed],
+  );
+
+  /**
+   * Where this case's chain actually ends right now.
+   *
+   * The server tip is the tail of the *seeded* rows; work that landed while
+   * the page was open extends it further. Chaining an override onto the server
+   * tip instead would hand it a sequence number the timeline had already used.
+   */
+  const liveTip: ChainTip = useMemo(() => {
+    const last = arrived[arrived.length - 1];
+    return last ? { hash: last.hash, seq: last.seq } : tip;
+  }, [arrived, tip]);
+
+  const override = useCallback(
+    (kind: OverrideKind) => {
+      const copy = OVERRIDE_COPY[kind];
+      appendEvent({
+        chain: record.id,
+        caseId: record.id,
+        actor: "HUMAN",
+        action: OVERRIDE_ACTIONS[kind],
+        detail: copy.detail,
+        tip: liveTip,
+        payload: {
+          case_id: record.id,
+          override: kind.toUpperCase(),
+          by: "Demo Merchant",
+          effect: copy.outcome,
+          stage_before: record.stage,
+        },
+      });
+    },
+    [record.id, record.stage, liveTip],
+  );
+
+  /**
+   * Rows added since the page opened: work that landed, then every override
+   * in the order it was made.
+   *
+   * The overrides used to be a single row recomputed from one piece of state,
+   * so pause → resume → escalate → resolve left one row behind instead of
+   * four, and a resume erased the pause it followed. They are now read
+   * straight off the log, which cannot lose one.
+   */
   const extraAudit = useMemo(() => {
-    const arrived = extendAudit(record.id, detail.audit, pending.slice(0, revealed));
-    if (!override) return arrived;
-    return [...arrived, overrideAuditRow(record.id, [...detail.audit, ...arrived], override)];
-  }, [record.id, detail.audit, pending, revealed, override]);
+    const appended: AuditEntry[] = session
+      .filter((row) => row.chain === record.id)
+      .map((row) => ({
+        seq: row.seq,
+        hash: row.hash,
+        prevHash: row.prevHash,
+        actor: row.actor,
+        action: row.action,
+        // Written just now, so they sit at the head of the batch clock.
+        minutesAgo: 0,
+        detail: row.detail,
+      }));
+    return [...arrived, ...appended];
+  }, [record.id, arrived, session]);
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="mono text-[12px] text-txt-faint">
-          seed 42 · {record.id} · clock anchored {CLOCK_ANCHOR_LABEL} · contacts masked · policy v4
+          seed 42 · {record.id} · clock anchored {CLOCK_ANCHOR_LABEL} · contacts masked · policy{" "}
+          {policy}
         </p>
         <Walk neighbours={neighbours} id={record.id} batchSize={batchSize} />
       </div>
@@ -88,15 +189,15 @@ export function CaseView({
 
         <CaseTimeline
           events={detail.events}
-          pending={override ? pending.slice(0, revealed) : pending}
+          pending={state.paused ? pending.slice(0, revealed) : pending}
           revealed={revealed}
         />
 
         <CaseLedger
           detail={detail}
           extraAudit={extraAudit}
-          override={override}
-          onOverride={setOverride}
+          state={state}
+          onOverride={override}
         />
       </div>
     </div>

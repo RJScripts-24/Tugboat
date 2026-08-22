@@ -444,7 +444,16 @@ export type ActivityEntry = {
   id: string;
   kind: ActivityKind;
   actor: ActivityActor;
+  /** "—" for events that belong to no single case, such as a degradation. */
   caseId: string;
+  /**
+   * Where the entry leads, when that is not its case.
+   *
+   * A degradation is not a case - it is the reason forty-seven of them were
+   * opened - and linking it to `/cases/—` produced a real 404 off the busiest
+   * surface in the demo. It points at the cases it opened instead.
+   */
+  href?: string;
   /** One line, what happened. */
   title: string;
   /** One line, the technical detail behind it. */
@@ -529,6 +538,7 @@ export function getSeedActivity(): ActivityEntry[] {
       kind: "DETECT",
       actor: "BOA",
       caseId: "—",
+      href: "/cases?cause=BANK_GATEWAY_DEGRADED",
       title: "Degradation detected",
       meta: "success rate 61.4% vs 94.5% baseline · 47 cases opened",
       time: "14:32:04",

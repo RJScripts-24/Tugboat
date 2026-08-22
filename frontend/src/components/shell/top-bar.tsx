@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 
 import { SignOutIcon } from "@/components/dashboard/icons";
 import { usePendingApprovals } from "@/lib/approvals-live";
-import { usePolicyVersion } from "@/lib/policy-live";
+import { usePolicyVersion } from "@/lib/event-store";
 import { ChalkRule } from "@/components/dashboard/chalk";
 import { NAV, titleFor } from "./nav";
 
@@ -29,7 +29,8 @@ export function TopBar({
 }) {
   const pathname = usePathname();
   const waiting = usePendingApprovals(pendingApprovals);
-  // Saving a policy bumps the version while the header is on screen.
+  // Folded from the event log, so the header, the Policies page and the
+  // ledger cannot disagree about which pack is in force.
   const policy = usePolicyVersion(policyVersion);
 
   return (

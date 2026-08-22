@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { ApprovalsView } from "@/components/approvals/approvals-view";
+import { getLedgerTips } from "@/lib/audit-data";
 import {
   getApprovalHistory,
   getApprovalStats,
@@ -30,6 +31,9 @@ export default function ApprovalsPage() {
       history={getApprovalHistory()}
       live={getLiveEscalation()}
       stats={getApprovalStats()}
+      // A decision is a ledger row on the case's own chain, so the view needs
+      // to know where each of those chains ends.
+      tips={getLedgerTips()}
     />
   );
 }

@@ -89,9 +89,11 @@ export function ActivityLog({
               <li key={entry.id} className={i === 0 && live ? "feed-enter" : undefined}>
                 {/* An entry names one case, so it opens that case. This is the
                     demo's own path: a line lands in the feed, you click it, and
-                    the full story of it is on screen. */}
+                    the full story of it is on screen. An entry that belongs to
+                    no single case carries its own destination instead - a
+                    degradation opens the cases it opened. */}
                 <Link
-                  href={`/cases/${encodeURIComponent(entry.caseId)}`}
+                  href={entry.href ?? `/cases/${encodeURIComponent(entry.caseId)}`}
                   className="flex gap-3.5 px-5 py-2.5 transition-colors hover:bg-white/[0.022]"
                 >
                   <span className="mono shrink-0 pt-[1px] text-[11.5px] text-txt-faint">

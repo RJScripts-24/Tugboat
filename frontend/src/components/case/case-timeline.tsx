@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
 
 import { ChalkRule } from "@/components/dashboard/chalk";
 import {
@@ -458,13 +458,19 @@ function TurnRow({ turn }: { turn: Turn }) {
 /* ------------------------------------------------------------------ */
 
 /**
- * The call, as a transport.
+ * The call, played.
  *
- * Deliberately labelled: the demo build stitches the TTS turns into one audio
- * file at run time (PRD 7.8), and until that pipeline is wired this control
- * plays the call's *timing* against the transcript rather than pretending to
- * hold a recording. A player that silently plays nothing would be the one
- * dishonest pixel on a page whose whole argument is auditability.
+ * This control used to move a waveform and a clock and make no sound at all -
+ * honest in its comment, useless in a demo, and the one thing a judge asked
+ * for that the product could not do. It speaks the transcript now, through the
+ * browser's own speech synthesis, in a Hindi voice where the machine has one.
+ *
+ * What it is *not* is a recording, and the label says so. The production
+ * pipeline (PRD 7.8) stitches per-turn TTS into one audio file server-side and
+ * stores it against the case; until that lands, synthesising the same
+ * transcript on the client is the closest thing to it that is not a lie. A
+ * machine with no speech voices installed falls back to the silent transport
+ * and says which one it is doing.
  *
  * The waveform is seeded from the turn text, so a given call always draws the
  * same shape.
@@ -472,7 +478,49 @@ function TurnRow({ turn }: { turn: Turn }) {
 function VoicePlayer({ seconds, turns }: { seconds: number; turns: Turn[] }) {
   const [playing, setPlaying] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [voiceName, setVoiceName] = useState<string | null>(null);
   const frame = useRef<number>(0);
+  const voice = useRef<SpeechSynthesisVoice | null>(null);
+
+  /*
+   * Voice selection, after mount.
+   *
+   * `speechSynthesis.getVoices()` is empty until the engine has enumerated,
+   * which is why this listens for `voiceschanged` rather than reading once -
+   * and why support is state rather than something read during render, where
+   * touching `window` would be a hydration mismatch.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const synth = window.speechSynthesis;
+
+    const pick = () => {
+      const voices = synth.getVoices();
+      if (voices.length === 0) return;
+      const hindi = voices.find((v) => v.lang?.toLowerCase().startsWith("hi"));
+      const indian = voices.find((v) => v.lang?.toLowerCase() === "en-in");
+      const chosen = hindi ?? indian ?? voices[0] ?? null;
+      voice.current = chosen;
+      setVoiceName(chosen ? chosen.name : null);
+    };
+
+    pick();
+    synth.addEventListener("voiceschanged", pick);
+    return () => {
+      synth.removeEventListener("voiceschanged", pick);
+      synth.cancel();
+    };
+  }, []);
+
+  const stop = useCallback(() => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    setPlaying(false);
+  }, []);
+
+  // Leaving the case must not leave a voice talking to an empty room.
+  useEffect(() => stop, [stop]);
 
   useEffect(() => {
     if (!playing) return;
@@ -482,7 +530,7 @@ function VoicePlayer({ seconds, turns }: { seconds: number; turns: Turn[] }) {
       const next = (performance.now() - started) / 1000;
       if (next >= seconds) {
         setElapsed(seconds);
-        setPlaying(false);
+        stop();
         return;
       }
       setElapsed(next);
@@ -494,43 +542,90 @@ function VoicePlayer({ seconds, turns }: { seconds: number; turns: Turn[] }) {
     // `elapsed` is read once to resume from where it stopped; following it
     // would restart the animation on every frame.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, seconds]);
+  }, [playing, seconds, stop]);
+
+  const toggle = () => {
+    const synth =
+      typeof window !== "undefined" && "speechSynthesis" in window
+        ? window.speechSynthesis
+        : null;
+
+    if (playing) {
+      synth?.cancel();
+      setPlaying(false);
+      return;
+    }
+
+    if (elapsed >= seconds) setElapsed(0);
+    setPlaying(true);
+
+    if (!synth || !voice.current) return;
+
+    // Queued as one utterance per turn, so the two speakers are audibly
+    // different and the pauses fall where the conversation's pauses were.
+    synth.cancel();
+    turns.forEach((turn, i) => {
+      const said = new SpeechSynthesisUtterance(turn.text);
+      said.lang = voice.current?.lang ?? "hi-IN";
+      said.rate = 0.98;
+      // Two speakers, audibly apart, without needing two installed voices.
+      said.pitch = turn.speaker === "BOA" ? 1.02 : 0.86;
+      // Naming a specific voice is an optimisation, not a requirement: some
+      // engines reject the assignment, and losing the whole call because the
+      // preferred voice would not take is worse than losing the accent.
+      try {
+        said.voice = voice.current;
+      } catch {
+        // Falls back to the engine's default for `lang`.
+      }
+      if (i === turns.length - 1) {
+        said.onend = () => setPlaying(false);
+      }
+      synth.speak(said);
+    });
+  };
 
   const bars = waveform(turns, 56);
   const progress = elapsed / seconds;
 
   return (
-    <div className="mt-3 flex items-center gap-3.5 border border-white/[0.14] px-3.5 py-3">
-      <button
-        type="button"
-        onClick={() => {
-          if (elapsed >= seconds) setElapsed(0);
-          setPlaying((p) => !p);
-        }}
-        aria-label={playing ? "Pause the call" : "Play the call"}
-        className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-white/25 text-txt transition-colors hover:border-waiting hover:text-waiting"
-      >
-        {playing ? (
-          <PauseIcon className="h-[11px] w-[11px]" />
-        ) : (
-          <PlayIcon className="ml-[2px] h-[11px] w-[11px]" />
-        )}
-      </button>
+    <div className="mt-3">
+      <div className="flex items-center gap-3.5 border border-white/[0.14] px-3.5 py-3">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={playing ? "Stop the call" : "Play the call"}
+          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-white/25 text-txt transition-colors hover:border-waiting hover:text-waiting"
+        >
+          {playing ? (
+            <PauseIcon className="h-[11px] w-[11px]" />
+          ) : (
+            <PlayIcon className="ml-[2px] h-[11px] w-[11px]" />
+          )}
+        </button>
 
-      <div className="flex h-[26px] min-w-0 flex-1 items-center gap-[2px]" aria-hidden>
-        {bars.map((height, i) => (
-          <span
-            key={i}
-            className="wave-bar"
-            data-played={i / bars.length <= progress}
-            style={{ height: `${height}%` }}
-          />
-        ))}
+        <div className="flex h-[26px] min-w-0 flex-1 items-center gap-[2px]" aria-hidden>
+          {bars.map((height, i) => (
+            <span
+              key={i}
+              className="wave-bar"
+              data-played={i / bars.length <= progress}
+              style={{ height: `${height}%` }}
+            />
+          ))}
+        </div>
+
+        <span className="mono shrink-0 text-[11.5px] text-txt-faint">
+          {clock(elapsed)} / {clock(seconds)}
+        </span>
       </div>
 
-      <span className="mono shrink-0 text-[11.5px] text-txt-faint">
-        {clock(elapsed)} / {clock(seconds)}
-      </span>
+      {/* What a listener is actually hearing. */}
+      <p className="mt-1.5 text-[11px] leading-[1.5] text-txt-faint">
+        {voiceName
+          ? `Spoken here by your browser's speech synthesis (${voiceName}) from the transcript below — not a stored recording. Production stitches per-turn TTS server-side and files it against the case.`
+          : "No speech voice available in this browser, so this plays the call's timing against the transcript rather than pretending to hold a recording."}
+      </p>
     </div>
   );
 }

@@ -9,7 +9,8 @@ import {
   RetryIcon,
   ShieldCheckSmallIcon,
 } from "@/components/dashboard/icons";
-import { setPolicyVersion } from "@/lib/policy-live";
+import type { ChainTip } from "@/lib/audit-data";
+import { appendEvent, policyVersionOf, useSessionEvents } from "@/lib/event-store";
 import {
   clonePack,
   diffPacks,
@@ -54,6 +55,7 @@ export function PoliciesView({
   queue,
   ledgerEntries,
   merchantName,
+  tip,
 }: {
   pack: PolicyPack;
   version: string;
@@ -64,12 +66,49 @@ export function PoliciesView({
   queue: Record<string, number>;
   ledgerEntries: number;
   merchantName: string;
+  /** Where the `policy` chain ends in the ledger. */
+  tip: ChainTip;
 }) {
   const [saved, setSaved] = useState<PolicyPack>(() => clonePack(initial));
   const [pack, setPack] = useState<PolicyPack>(() => clonePack(initial));
-  const [version, setVersion] = useState(initialVersion);
-  const [revisions, setRevisions] = useState(initialRevisions);
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  /*
+   * The version in force is folded from the ledger, not held here.
+   *
+   * It used to be `useState`, which is why the Policies page could reach v6
+   * while the shell and the Audit Explorer were still reporting v4: three
+   * surfaces, three copies, one of them updated. There is one copy now, and
+   * every page reads it.
+   */
+  const session = useSessionEvents();
+  const version = policyVersionOf(session, initialVersion);
+
+  /** Server revisions, plus anything saved this session - newest first. */
+  const revisions = useMemo(() => {
+    const appended: PolicyRevision[] = session
+      .filter((row) => row.action === "POLICY_CHANGED")
+      .map((row) => {
+        const payload = row.payload as {
+          version: string;
+          changed_by: string;
+          changes: string[];
+          summary?: string;
+        };
+        return {
+          version: payload.version,
+          hash: row.hash,
+          prevHash: row.prevHash,
+          actor: "HUMAN" as const,
+          by: payload.changed_by,
+          daysAgo: 0,
+          summary: payload.summary ?? "Saved from the Policies page",
+          changes: payload.changes,
+        };
+      })
+      .reverse();
+    return [...appended, ...initialRevisions];
+  }, [session, initialRevisions]);
   const nextToast = useRef(0);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -130,30 +169,38 @@ export function PoliciesView({
   const save = useCallback(() => {
     if (!dirty) return;
 
-    const entry: PolicyRevision = {
-      version: draftVersion,
-      hash: draftHash,
-      prevHash,
+    const lines = changes.map((change) => `${change.path} ${change.from} → ${change.to}`);
+    const summary = summarise(changes);
+
+    // One write, to the ledger. The shell, the Audit Explorer and this page
+    // all read the result of it rather than being told about it separately.
+    const row = appendEvent({
+      chain: "policy",
+      caseId: null,
       actor: "HUMAN",
-      by: merchantName,
-      daysAgo: 0,
-      summary: summarise(changes),
-      changes: changes.map((change) => `${change.path} ${change.from} → ${change.to}`),
-    };
+      action: "POLICY_CHANGED",
+      detail: summary,
+      tip,
+      payload: {
+        version: draftVersion,
+        previous_version: version,
+        changed_by: merchantName,
+        summary,
+        changes: lines,
+        fields: lines.length,
+      },
+    });
 
     setSaved(clonePack(pack));
-    setVersion(draftVersion);
-    setRevisions((current) => [entry, ...current]);
-    setPolicyVersion(draftVersion);
 
     const looser = changes.filter((change) => change.direction === "looser").length;
     pushToast({
       title: `Saved as policy ${draftVersion} · POLICY_CHANGED written`,
       detail: `${changes.length} field${changes.length === 1 ? "" : "s"}${
         looser > 0 ? `, ${looser} of them looser` : ""
-      } · ledger entry ${draftHash} · in force on the next planned action`,
+      } · ledger entry ${row.hash} · in force on the next planned action`,
     });
-  }, [changes, dirty, draftHash, draftVersion, merchantName, pack, prevHash, pushToast]);
+  }, [changes, dirty, draftVersion, merchantName, pack, pushToast, tip, version]);
 
   const reset = useCallback(() => {
     setPack(clonePack(DEFAULT_PACK));

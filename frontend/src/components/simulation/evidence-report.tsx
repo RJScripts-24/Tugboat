@@ -61,11 +61,14 @@ export function EvidenceReport({
   config,
   report,
   executed,
+  runs,
 }: {
   config: SimulationConfig;
   report: Report;
   /** The configuration the run on screen was actually produced by. */
   executed: SimulationConfig;
+  /** Run history including anything saved this session; falls back to the shipped list. */
+  runs?: SavedRun[];
 }) {
   const { headline, grading, escalations, compliance, rules } = report;
   const tugboat = report.arms.find((arm) => arm.key === "tugboat");
@@ -125,7 +128,7 @@ export function EvidenceReport({
 
       <Exceptions groups={report.exceptions} atRiskPaise={headline.atRiskPaise} />
 
-      <RunHistory runs={report.runs} />
+      <RunHistory runs={runs ?? report.runs} />
     </div>
   );
 }
@@ -560,9 +563,10 @@ function CompliancePanel({
           came back — {formatPercent(escalations.postApprovalRecoveryRate)}.
         </p>
         <p className="mt-2.5 text-[11.5px] leading-[1.6] text-txt-faint">
-          Every assertion above is recomputed from the ledger, not reported by the agent. The chain
-          is what makes that possible, and the Audit Explorer is where it can be re-verified by
-          hand.
+          Every assertion above is recomputed from the case ledger — {""}
+          {compliance.entries.toLocaleString("en-IN")} ledger entries — not reported by the agent.
+          That is the same ledger, and the same count, the Audit Explorer browses; the chain is what
+          makes re-verifying it by hand possible.
         </p>
       </div>
     </Section>

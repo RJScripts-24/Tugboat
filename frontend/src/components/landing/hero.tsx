@@ -4,15 +4,23 @@ import {
   ArrowRightIcon,
   AuditDocIcon,
   IndiaMapIcon,
-  RazorpayMark,
   ShieldCheckIcon,
   SparkleIcon,
 } from "./icons";
 
+/*
+ * Claims this product can actually stand behind.
+ *
+ * "Razorpay Native" used to lead this row and was removed: Tugboat is built
+ * against Razorpay's test-mode APIs, which is not the same thing as being a
+ * Razorpay product, and a badge a judge from Razorpay would read as false is
+ * the worst possible first impression. What is left is checkable in the app -
+ * the ledger is on the Audit Explorer, the guardrails are on the Policies
+ * page, and the Hinglish and UPI handling is in the cases themselves.
+ */
 const TRUST = [
-  { label: "Razorpay Native", Icon: RazorpayMark, tinted: true },
-  { label: "Secure & Compliant", Icon: ShieldCheckIcon, tinted: false },
   { label: "Audit Ready", Icon: AuditDocIcon, tinted: false },
+  { label: "Bounded & Stoppable", Icon: ShieldCheckIcon, tinted: false },
   { label: "Built for India", Icon: IndiaMapIcon, tinted: false },
 ];
 

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { SimulationLab } from "@/components/simulation/simulation-lab";
+import { getChainTip } from "@/lib/audit-data";
 import {
   getArmResults,
   getCompliance,
@@ -34,6 +35,7 @@ export default function SimulationPage() {
     <SimulationLab
       defaultConfig={getDefaultConfig()}
       script={getRunScript()}
+      tip={getChainTip("policy")}
       report={{
         headline: getHeadline(),
         arms: getArmResults(),

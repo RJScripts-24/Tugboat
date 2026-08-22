@@ -104,15 +104,6 @@ export function BarChartIcon(props: IconProps) {
 /* Hero trust-strip icons                                              */
 /* ------------------------------------------------------------------ */
 
-export function RazorpayMark(props: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
-      <path d="M14.7 2 8.4 22h4.1L20.6 2h-5.9Z" fill="#3395FF" />
-      <path d="M9.4 6.6 3.4 22h4.2l4.4-11.2-2.6-4.2Z" fill="#3395FF" fillOpacity="0.72" />
-    </svg>
-  );
-}
-
 export function ShieldCheckIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>

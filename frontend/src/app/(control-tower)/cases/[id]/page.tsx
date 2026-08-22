@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { CaseView } from "@/components/case/case-view";
+import { getChainTip } from "@/lib/audit-data";
 import { getCaseDetail, getCaseNeighbours } from "@/lib/case-detail-data";
+import { POLICY_VERSION } from "@/lib/policies-data";
 import { CASE_TYPE_META, getPipelineCases } from "@/lib/pipeline-data";
 
 type Params = { params: Promise<{ id: string }> };
@@ -37,6 +39,10 @@ export default async function CaseDetailPage({ params }: Params) {
       detail={detail}
       neighbours={getCaseNeighbours(id)}
       batchSize={getPipelineCases().length}
+      // Where this case's chain ends in the ledger, so an override appended in
+      // the browser continues it rather than starting a second one.
+      tip={getChainTip(id)}
+      policyVersion={POLICY_VERSION}
     />
   );
 }

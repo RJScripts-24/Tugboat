@@ -1875,3 +1875,117 @@
     transform: translateX(0);
   }
 }
+
+/* ---------------------------------------------------------------
+   Print
+
+   The Evidence Report is the one thing in this product that has to
+   leave the screen. "Download report (PDF)" goes through the
+   browser's own print pipeline rather than a bundled PDF engine, so
+   what a judge saves is what a judge saw - and this is the
+   stylesheet that turns a dark console into a document.
+   --------------------------------------------------------------- */
+.print-only {
+  display: none;
+}
+
+@media print {
+  /* Ink on paper. The board's chalk, grain and blooms all exist to be
+     read on a screen; printed, they are a solid black rectangle and
+     four hundred pages of toner. */
+  :root,
+  .slate {
+    --color-txt: #101418;
+    --color-txt-dim: #26313c;
+    --color-txt-faint: #55616d;
+    --slate-base: #ffffff;
+
+    /* The five tones keep their meanings and lose their glow: chalk
+       colours picked to sit on near-black are close to invisible on
+       white, and the report's colour coding is load-bearing. */
+    --color-recovered: #1c7a3f;
+    --color-waiting: #8a6100;
+    --color-halted: #a11b1b;
+    --color-diagnosis: #1a5f80;
+    --color-neutral: #3b4650;
+  }
+
+  .slate,
+  body {
+    background: #fff !important;
+    background-image: none !important;
+  }
+
+  /* The two fixed overlays and every glow, gone. */
+  .slate::before,
+  .slate::after,
+  .auth-glow,
+  .page-grain::after {
+    display: none !important;
+  }
+
+  .chalk,
+  .chalk-strong,
+  .slate * {
+    text-shadow: none !important;
+  }
+
+  /* Chrome, navigation and controls are not part of the document. */
+  aside,
+  header,
+  .no-print,
+  .toast-stack,
+  .save-bar {
+    display: none !important;
+  }
+
+  /* The shell reserves space for a sidebar that is no longer there. */
+  .lg\:pl-\[236px\] {
+    padding-left: 0 !important;
+  }
+
+  main {
+    padding: 0 !important;
+  }
+
+  .print-only {
+    display: block;
+  }
+
+  /* Regions become boxes with real edges, and are not split mid-thought. */
+  .surface {
+    border-color: rgba(0, 0, 0, 0.28) !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .chalk-rule {
+    background-image: none !important;
+    background-color: rgba(0, 0, 0, 0.35) !important;
+    -webkit-mask-image: none !important;
+    mask-image: none !important;
+    height: 1px;
+  }
+
+  .headline-band {
+    border-color: rgba(0, 0, 0, 0.4) !important;
+    background: rgba(0, 0, 0, 0.03) !important;
+  }
+
+  .optable td,
+  .optable th {
+    color: #1b232c !important;
+  }
+
+  /* Anything that scrolls on screen has to be fully present on paper. */
+  .scroll-thin,
+  .overflow-x-auto,
+  .overflow-y-auto {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}

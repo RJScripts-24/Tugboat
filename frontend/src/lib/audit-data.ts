@@ -410,6 +410,43 @@ function monotonic(chain: LedgerRow[]): LedgerRow[] {
 }
 
 /* ------------------------------------------------------------------ */
+/* Chain tips                                                          */
+/* ------------------------------------------------------------------ */
+
+export type ChainTip = { hash: string; seq: number };
+
+/**
+ * Where each chain stood when the page was rendered.
+ *
+ * Anything appended in the browser this session has to chain onto the last row
+ * the server wrote, or it is a second log rather than a continuation of the
+ * first. Pages hand the relevant tip to `appendEvent`, which is all the store
+ * needs to keep one unbroken chain per case.
+ */
+export function getLedgerTips(): Record<string, ChainTip> {
+  const tips: Record<string, ChainTip> = {};
+  for (const row of getLedger()) {
+    const tip = tips[row.chain];
+    if (!tip || row.seq > tip.seq) tips[row.chain] = { hash: row.hash, seq: row.seq };
+  }
+  return tips;
+}
+
+/** One chain's tip, for a page that only renders one case. */
+export function getChainTip(chain: string): ChainTip {
+  let tip: ChainTip = { hash: "0".repeat(10), seq: 0 };
+  for (const row of getLedger()) {
+    if (row.chain === chain && row.seq > tip.seq) tip = { hash: row.hash, seq: row.seq };
+  }
+  return tip;
+}
+
+/** How many rows the live ledger holds. The one number pages may quote. */
+export function getLedgerSize(): number {
+  return getLedger().length;
+}
+
+/* ------------------------------------------------------------------ */
 /* Derived figures                                                     */
 /* ------------------------------------------------------------------ */
 
