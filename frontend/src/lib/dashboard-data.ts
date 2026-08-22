@@ -512,7 +512,7 @@ export function getSeedActivity(): ActivityEntry[] {
       actor: "BOA",
       caseId: "C-1149",
       title: "Escalated #C-1149",
-      meta: "12% discount above 15% cap · awaiting approval",
+      meta: "12% discount · any discount needs a human · awaiting approval",
       time: "14:34:40",
     },
     {
@@ -635,9 +635,9 @@ export function getActivityScript(): Omit<ActivityEntry, "time">[] {
       id: "s-12",
       kind: "RECOVERED",
       actor: "RECOVERY",
-      caseId: "C-1166",
+      caseId: "C-1071",
       title: "₹12,050 recovered",
-      meta: "#C-1166 · approved discount · 3 attempts",
+      meta: "#C-1071 · approved discount · 3 attempts",
     },
   ];
 }
@@ -646,9 +646,15 @@ export function getActivityScript(): Omit<ActivityEntry, "time">[] {
 /* Sidebar counters                                                    */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The sidebar's counters.
+ *
+ * The pending-approvals figure deliberately does not live here: it is derived
+ * from the queue itself in `lib/approvals-data`, because a count kept beside
+ * the thing it counts is a count that eventually disagrees with it.
+ */
 export function getShellStatus() {
   return {
-    pendingApprovals: 4,
     recoveredTodayPaise: 47_820 * RUPEE,
     activeCases: 63,
     onDuty: true,

@@ -87,8 +87,11 @@ export function ActivityLog({
             const hex = TONE_HEX[ACTOR_TONE[entry.actor]];
             return (
               <li key={entry.id} className={i === 0 && live ? "feed-enter" : undefined}>
+                {/* An entry names one case, so it opens that case. This is the
+                    demo's own path: a line lands in the feed, you click it, and
+                    the full story of it is on screen. */}
                 <Link
-                  href={`/cases?case=${encodeURIComponent(entry.caseId)}`}
+                  href={`/cases/${encodeURIComponent(entry.caseId)}`}
                   className="flex gap-3.5 px-5 py-2.5 transition-colors hover:bg-white/[0.022]"
                 >
                   <span className="mono shrink-0 pt-[1px] text-[11.5px] text-txt-faint">

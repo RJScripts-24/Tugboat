@@ -1,24 +1,50 @@
 import type { Metadata } from "next";
 
-import { ComingNext } from "@/components/shell/coming-next";
+import { SimulationLab } from "@/components/simulation/simulation-lab";
+import {
+  getArmResults,
+  getCompliance,
+  getDefaultConfig,
+  getEscalationSummary,
+  getExceptions,
+  getGrading,
+  getHeadline,
+  getRecoveryByType,
+  getRuleFirings,
+  getRunHistory,
+  getRunScript,
+} from "@/lib/simulation-data";
 
 export const metadata: Metadata = {
   title: "Simulation Lab — Tugboat",
   robots: { index: false, follow: false },
 };
 
+/**
+ * Simulation Lab (PRD 6.3, page 6) - the evidence page.
+ *
+ * The whole report is assembled on the server from `lib/simulation-data`,
+ * shaped exactly like `GET /simulations/:id/report` (PRD 7.5), so this page
+ * does not change when the batch runner arrives. Nothing is fetched in the
+ * browser and nothing is computed twice: the client component replays a run
+ * whose numbers were already settled here.
+ */
 export default function SimulationPage() {
   return (
-    <ComingNext
-      title="Simulation Lab"
-      purpose="The evidence page. A seeded batch of 200+ synthetic cases, run against three policy arms, reported honestly."
-      contents={[
-        "Configure: batch size, case-type mix, difficulty preset, random seed, policy pack",
-        "Headline: rupees recovered versus a no-agent baseline, and the uplift between them",
-        "Diagnosis accuracy against ground truth, stopping-rule trigger counts, cost per ₹100 recovered",
-        "Baseline vs naive vs Tugboat — naive sends 3× the messages and recovers less",
-        "The exceptions list: what the agent could not recover, and why",
-      ]}
+    <SimulationLab
+      defaultConfig={getDefaultConfig()}
+      script={getRunScript()}
+      report={{
+        headline: getHeadline(),
+        arms: getArmResults(),
+        byType: getRecoveryByType(),
+        grading: getGrading(),
+        rules: getRuleFirings(),
+        compliance: getCompliance(),
+        escalations: getEscalationSummary(),
+        exceptions: getExceptions(),
+        runs: getRunHistory(),
+      }}
     />
   );
 }

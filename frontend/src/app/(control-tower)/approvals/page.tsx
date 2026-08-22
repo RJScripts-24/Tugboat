@@ -1,24 +1,35 @@
 import type { Metadata } from "next";
 
-import { ComingNext } from "@/components/shell/coming-next";
+import { ApprovalsView } from "@/components/approvals/approvals-view";
+import {
+  getApprovalHistory,
+  getApprovalStats,
+  getLiveEscalation,
+  getPendingApprovals,
+} from "@/lib/approvals-data";
 
 export const metadata: Metadata = {
   title: "Approvals Queue — Tugboat",
   robots: { index: false, follow: false },
 };
 
+/**
+ * Approvals Queue (PRD 6.3, page 5).
+ *
+ * The page the track's "compliant escalation" line asks for: the actions Boa
+ * planned, checked against policy v4, and then refused to take on its own.
+ *
+ * All four datasets are read on the server from `lib/approvals-data`, shaped
+ * exactly like `GET /approvals` and `GET /approvals/stats`, so this page does
+ * not change when the API arrives.
+ */
 export default function ApprovalsPage() {
   return (
-    <ComingNext
-      title="Approvals Queue"
-      purpose="Compliant escalation, made visible. Actions Boa is not allowed to take alone wait here for a human."
-      contents={[
-        "One card per request: the case, the money, and the agent's justification",
-        "Policy context chips showing which cap the action would have crossed",
-        "The exact draft that would be sent, expandable and editable before approval",
-        "Approve & Execute resumes the case live; Reject requires a reason",
-        "History tab with approval latency — the human is part of the measured loop",
-      ]}
+    <ApprovalsView
+      pending={getPendingApprovals()}
+      history={getApprovalHistory()}
+      live={getLiveEscalation()}
+      stats={getApprovalStats()}
     />
   );
 }

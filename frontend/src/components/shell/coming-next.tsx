@@ -14,10 +14,15 @@ export function ComingNext({
   title,
   purpose,
   contents,
+  backHref = "/dashboard",
+  backLabel = "Back to the Control Tower",
 }: {
   title: string;
   purpose: string;
   contents: string[];
+  /** Where this stub was reached from - defaults to the dashboard. */
+  backHref?: string;
+  backLabel?: string;
 }) {
   return (
     <div className="surface mx-auto max-w-[720px] p-6 sm:p-7">
@@ -37,10 +42,10 @@ export function ComingNext({
       </ul>
 
       <Link
-        href="/dashboard"
+        href={backHref}
         className="mt-6 inline-flex items-center gap-1.5 text-[13px] font-medium text-txt-dim transition-colors hover:text-txt"
       >
-        Back to the Control Tower
+        {backLabel}
         <ChevronRightIcon className="h-[14px] w-[14px]" />
       </Link>
     </div>

@@ -6,6 +6,8 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { SignOutIcon } from "@/components/dashboard/icons";
+import { usePendingApprovals } from "@/lib/approvals-live";
+import { usePolicyVersion } from "@/lib/policy-live";
 import { ChalkRule } from "@/components/dashboard/chalk";
 import { NAV, titleFor } from "./nav";
 
@@ -26,9 +28,15 @@ export function TopBar({
   policyVersion: string;
 }) {
   const pathname = usePathname();
+  const waiting = usePendingApprovals(pendingApprovals);
+  // Saving a policy bumps the version while the header is on screen.
+  const policy = usePolicyVersion(policyVersion);
 
   return (
-    <header className="sticky top-0 z-30 bg-[var(--slate-base)]">
+    // Above 61: globals lift every control onto the board so the tooth layer
+    // does not eat it, which means a button scrolling under an opaque header
+    // would otherwise paint straight through it.
+    <header className="sticky top-0 z-[62] bg-[var(--slate-base)]">
       <div className="flex h-[68px] items-center gap-3.5 px-4 sm:px-5">
         <Link href="/dashboard" className="shrink-0 lg:hidden" aria-label="Tugboat Control Tower">
           <Image
@@ -52,7 +60,7 @@ export function TopBar({
         </span>
 
         <span className="mono hidden text-[11px] text-txt-faint xl:inline">
-          policy {policyVersion}
+          policy {policy}
         </span>
 
         <div className="ml-auto flex items-center gap-3">
@@ -96,8 +104,8 @@ export function TopBar({
               }`}
             >
               {label}
-              {badge === "approvals" && pendingApprovals > 0 ? (
-                <span className="mono ml-1.5 text-[11px] text-waiting">{pendingApprovals}</span>
+              {badge === "approvals" && waiting > 0 ? (
+                <span className="mono ml-1.5 text-[11px] text-waiting">{waiting}</span>
               ) : null}
               {active ? (
                 <span className="chalk-rule absolute inset-x-0 bottom-[3px]" aria-hidden />

@@ -5,7 +5,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { ChalkRule } from "@/components/dashboard/chalk";
+import { BoaFace } from "./boa-face";
 import { MoneyValue } from "@/components/dashboard/primitives";
+import { usePendingApprovals } from "@/lib/approvals-live";
 import { NAV } from "./nav";
 
 /**
@@ -23,11 +25,15 @@ export function Sidebar({
   recoveredTodayPaise,
   activeCases,
 }: {
+  /** The server's count; the badge follows the queue from there. */
   pendingApprovals: number;
   recoveredTodayPaise: number;
   activeCases: number;
 }) {
   const pathname = usePathname();
+  // A case escalating during the demo has to move this number without a
+  // refresh (PRD 6.3, page 5), and a decision has to take it back down.
+  const waiting = usePendingApprovals(pendingApprovals);
 
   return (
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-[236px] flex-col border-r border-[rgba(232,227,214,0.08)] lg:flex">
@@ -73,10 +79,8 @@ export function Sidebar({
                     }`}
                   />
                   <span className="nav-label">{label}</span>
-                  {badge === "approvals" && pendingApprovals > 0 ? (
-                    <span className="mono ml-auto text-[11.5px] text-waiting">
-                      {pendingApprovals}
-                    </span>
+                  {badge === "approvals" && waiting > 0 ? (
+                    <span className="mono ml-auto text-[11.5px] text-waiting">{waiting}</span>
                   ) : null}
                 </Link>
               </li>
@@ -85,18 +89,15 @@ export function Sidebar({
         </ul>
       </nav>
 
-      {/* Boa as an operator identity, not a mascot: name, role, duty state.
-          The avatar is a supplied asset and stays untouched. */}
+      {/* Boa as an operator identity, not a mascot: face, name, role, duty
+          state. The face blinks, which is the only thing on the whole board
+          that moves without a case moving - and that is the point of it. An
+          agent working your receivables while you are not looking should feel
+          like somebody is there. */}
       <ChalkRule />
       <div className="px-4 py-3.5">
-        <div className="flex items-center gap-2.5">
-          <Image
-            src="/media/boa-avatar.png"
-            alt=""
-            width={80}
-            height={80}
-            className="h-[34px] w-[34px] rounded-full"
-          />
+        <div className="flex items-center gap-3">
+          <BoaFace size={64} />
           <div className="min-w-0">
             <p className="chalk-hand text-[15px] leading-tight text-txt">BOA</p>
             <p className="chalk-hand mt-[2px] text-[12px] leading-tight text-txt-faint">Revenue recovery agent</p>

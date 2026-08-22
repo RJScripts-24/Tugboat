@@ -261,6 +261,102 @@ export function PromiseIcon(props: IconProps) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Case types - one mark per playbook (PRD 3)                          */
+/* ------------------------------------------------------------------ */
+
+/** Payment failed - a card, declined. */
+export function CardIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <rect x="2.6" y="5.2" width="18.8" height="13.6" rx="2.2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M2.6 9.8h18.8" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 14.4h3.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Checkout abandoned - the cart left standing. */
+export function CartIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M2.8 3.8h2.6l2.3 10.4h9.5l2.1-7.4H6.4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="9.4" cy="18.6" r="1.5" fill="currentColor" />
+      <circle cx="16.6" cy="18.6" r="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Mandate failed - the recurring debit that bounced. */
+export function MandateIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M4.6 10.4a7.4 7.4 0 0 1 12.6-3.6l2 2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <path
+        d="M19.4 13.6a7.4 7.4 0 0 1-12.6 3.6l-2-2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <path d="M19.6 4.6v4.4h-4.4M4.4 19.4V15h4.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Invoice overdue - the document past its date. */
+export function InvoiceIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M5.4 3.4h9.2l4 4v13.2H5.4V3.4Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path d="M14.2 3.6v4.2h4.2" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M8.4 12.2h7.2M8.4 15.8h4.8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Filter menus and sort headers. */
+export function ChevronDownIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path d="m5.4 9 6.6 6.6L18.6 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function CloseIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path d="M5.6 5.6 18.4 18.4M18.4 5.6 5.6 18.4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Export - the list, leaving. */
+export function DownloadIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path d="M12 3.6v10.8m0 0 4-4m-4 4-4-4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4.4 16.4v2.2a1.8 1.8 0 0 0 1.8 1.8h11.6a1.8 1.8 0 0 0 1.8-1.8v-2.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Chrome                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -300,6 +396,278 @@ export function SignOutIcon(props: IconProps) {
       />
       <path
         d="M9.8 12h10.6m0 0-3.2-3.2M20.4 12l-3.2 3.2"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Case Detail - timeline marks and controls (PRD 6.3, page 4)         */
+/* ------------------------------------------------------------------ */
+
+/** Planned - the route chosen at a fork, with the rejected arm left drawn. */
+export function PlanIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M12 20.6V13c0-2.4 1.9-4.3 4.3-4.3h3"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 14.4V8.7C12 6.3 10.1 4.4 7.7 4.4h-3"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeDasharray="2.6 2.8"
+        strokeOpacity="0.55"
+      />
+      <path
+        d="m16.8 5.8 3 2.9-3 2.9"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="20.6" r="1.6" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** A policy verdict that went the other way. */
+export function ShieldBlockIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M12 2.8 5 5.4v5.9c0 4.3 2.9 7.9 7 9.3 4.1-1.4 7-5 7-9.3V5.4L12 2.8Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9.4 9.4 14.6 14.6M14.6 9.4 9.4 14.6"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** Email sent - the envelope, distinct from the paper plane. */
+export function MailIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <rect x="2.8" y="5" width="18.4" height="14" rx="2.2" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="m3.6 7 7.3 5.4a1.8 1.8 0 0 0 2.2 0L20.4 7"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** WhatsApp nudge - the chat mark with its tail. */
+export function WhatsAppIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M12 3.2a8.6 8.6 0 0 0-7.4 13l-1.2 4.4 4.6-1.2A8.6 8.6 0 1 0 12 3.2Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9 8.4c.4-.1.7 0 .9.4l.7 1.4c.1.3.1.5-.1.8l-.4.5c-.2.2-.2.4-.1.6.6 1.1 1.4 1.8 2.5 2.3.3.1.5.1.6-.1l.5-.5c.2-.2.4-.3.7-.2l1.5.7c.3.2.4.4.4.7 0 .8-.6 1.4-1.4 1.5-2.6.2-6.2-3.4-6.1-6 0-.8.5-1.4 1.3-1.6l.1-.5Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+/** The customer wrote back. */
+export function ReplyIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M20.4 11.6c0 3.8-3.8 6.9-8.4 6.9-.9 0-1.8-.1-2.6-.3l-4.4 1.6 1.2-3.6a6.4 6.4 0 0 1-2.6-4.6c0-3.8 3.8-6.9 8.4-6.9s8.4 3.1 8.4 6.9Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path d="M8.8 11.6h6.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** The origin object lives in the Razorpay dashboard, not in here. */
+export function ExternalLinkIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M13.6 4.4h6v6M19.2 4.8 11 13"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M18.6 14.2v4.4a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2V7.4a2 2 0 0 1 2-2h4.4"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** Copy a hash or an id without selecting it by hand. */
+export function CopyIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <rect x="8.4" y="3.4" width="12.2" height="12.2" rx="2.2" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M15.6 18.4v.4a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2v-8.2a2 2 0 0 1 2-2h.4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** The human override: stop the agent on this case. */
+export function PauseIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path d="M8.6 4.8v14.4M15.4 4.8v14.4" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** A rule that cannot be switched off. */
+export function LockIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <rect x="4.6" y="10.2" width="14.8" height="10.4" rx="2.2" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M8.2 10.2V7.6a3.8 3.8 0 0 1 7.6 0v2.6"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** Chain integrity verified. */
+export function ChainIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M10 14a3.6 3.6 0 0 1 0-5l2.4-2.4a3.6 3.6 0 0 1 5.1 5.1L16.2 13"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M14 10a3.6 3.6 0 0 1 0 5l-2.4 2.4a3.6 3.6 0 0 1-5.1-5.1L7.8 11"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** A plain tick, for checklists that are not shields. */
+export function CheckIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="m5 12.6 4.6 4.6L19 6.8"
+        stroke="currentColor"
+        strokeWidth="2.1"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Approvals                                                           */
+/* ------------------------------------------------------------------ */
+
+/** A decision taken by a person: the gavel, struck. */
+export function GavelIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="m9.6 4.4 5.4 5.4M12.4 3 17 7.6M7.4 6.6 12 11.2"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="m11.6 9.4-6 6a1.9 1.9 0 0 0 2.7 2.7l6-6"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M13.6 20.4h7.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Time a request has been waiting - an hourglass, not a spinner. */
+export function HourglassIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path d="M6.6 3.6h10.8M6.6 20.4h10.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path
+        d="M7.8 3.6v3.1c0 1.9 4.2 3.6 4.2 5.3s-4.2 3.4-4.2 5.3v3.1M16.2 3.6v3.1c0 1.9-4.2 3.6-4.2 5.3s4.2 3.4 4.2 5.3v3.1"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** The draft, before anybody has signed it off. */
+export function DraftIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M6 3.6h7.4L18.4 8.6v11.8H6z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path d="M13.2 3.8v5h5" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M8.8 13.2h6.4M8.8 16.4h4.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Editing that draft: the pencil. */
+export function PencilIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <path
+        d="M15.6 4.4 19.6 8.4M4.4 19.6l1-4 10.2-10.2 4 4L9.4 19.6z"
         stroke="currentColor"
         strokeWidth="1.6"
         strokeLinecap="round"

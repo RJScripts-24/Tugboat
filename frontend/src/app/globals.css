@@ -973,3 +973,905 @@
  * whole point: consistent by construction and impossible to
  * double-apply.
  */
+
+/* ---------------------------------------------------------------
+   Pipeline
+
+   Three additions, all of them in service of one page: a filter
+   control that reads as chalk rather than as a form widget, a menu
+   that has to sit above the board's controls, and the flash a row
+   gives when its stage changes under you.
+   --------------------------------------------------------------- */
+
+/* A filter control. Same hairline and same 2px corner as .surface, so a
+   control reads as another region of the board rather than a widget
+   dropped onto it. */
+.filter-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 253, 248, 0.22);
+  border-radius: 2px;
+  background: transparent;
+  padding: 5px 10px;
+  font-size: 12.5px;
+  color: var(--color-txt-dim);
+  transition:
+    border-color 130ms ease,
+    color 130ms ease,
+    background-color 130ms ease;
+}
+
+.filter-control:hover {
+  border-color: rgba(255, 253, 248, 0.42);
+  background: rgba(255, 253, 248, 0.04);
+  color: var(--color-txt);
+}
+
+.filter-control[data-active="true"] {
+  border-color: rgba(255, 232, 134, 0.55);
+  color: var(--color-txt);
+}
+
+.filter-control:focus-visible {
+  outline: 2px solid #ffd76a;
+  outline-offset: 2px;
+}
+
+/*
+ * The board paints buttons at z-61 (globals: controls sit ON the slate),
+ * so an open menu has to clear that or the Export button punches through
+ * it. The whole group is lifted, trigger included, to keep one stacking
+ * context.
+ */
+.filter-group {
+  position: relative;
+  z-index: 70;
+}
+
+.filter-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  min-width: 216px;
+  border: 1px solid rgba(255, 253, 248, 0.28);
+  border-radius: 2px;
+  /* Opaque: the board's grain must not read through a menu, or the text
+     underneath it becomes legible and the menu stops looking like a
+     surface. */
+  background: #08090c;
+  box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.9);
+  padding: 4px;
+}
+
+.filter-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 9px;
+  border-radius: 2px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  text-align: left;
+  color: var(--color-txt-dim);
+  transition:
+    background-color 110ms ease,
+    color 110ms ease;
+}
+
+.filter-option:hover {
+  background: rgba(255, 253, 248, 0.06);
+  color: var(--color-txt);
+}
+
+/* A dismissible record of one narrowing. */
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(255, 253, 248, 0.24);
+  border-radius: 2px;
+  padding: 3px 5px 3px 9px;
+  font-size: 11.5px;
+  color: var(--color-txt-dim);
+  transition:
+    border-color 130ms ease,
+    color 130ms ease;
+}
+
+.filter-chip:hover {
+  border-color: var(--color-halted);
+  color: var(--color-txt);
+}
+
+/*
+ * A stage changed while you were looking at the list.
+ *
+ * Chalk dust brushed over the row and wiped off again - the same
+ * gesture as the table's hover, held a beat longer. Loud enough to
+ * catch the eye during a demo, quiet enough that eight of them in a
+ * minute do not turn the page into a slot machine.
+ */
+.row-flash td {
+  animation: row-flash 1100ms ease-out both;
+}
+
+@keyframes row-flash {
+  0% {
+    background-color: rgba(255, 253, 248, 0.14);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-flash td {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------
+   Case Detail
+
+   The money page (PRD 6.3, page 4). Everything here serves the
+   timeline: a rail drawn down the board, a marker per event, and
+   two quotation forms - a message as it was sent, and a call as it
+   was spoken. No cards, no fills; the board still reads through.
+   --------------------------------------------------------------- */
+
+/*
+ * The rail.
+ *
+ * A drawn line, not a border: dense in the middle where the stick
+ * pressed and lifting at both ends, so a timeline that scrolls for
+ * two screens does not read as a table rule. It sits under the
+ * markers, which are opaque and punch their own hole in it.
+ */
+.rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(255, 253, 248, 0.42) 2.5%,
+    rgba(255, 253, 248, 0.3) 50%,
+    rgba(255, 253, 248, 0.42) 97%,
+    transparent 100%
+  );
+  -webkit-mask-image: var(--chalk-grain-coarse);
+  mask-image: var(--chalk-grain-coarse);
+  -webkit-mask-size: 120px 120px;
+  mask-size: 120px 120px;
+}
+
+/*
+ * A marker on the rail.
+ *
+ * Opaque centre so the rail does not show through the glyph, and a
+ * hairline in the node's own colour. Filled discs were tried and
+ * turned the timeline into a string of beads - the outline keeps the
+ * icon inside legible, which is what carries the meaning.
+ */
+.node-mark {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  height: 30px;
+  width: 30px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: #030304;
+}
+
+/* The node an operator is meant to land on first: the outcome. */
+.node-mark[data-emphasis="true"] {
+  box-shadow: 0 0 0 4px rgba(3, 3, 4, 1), 0 0 16px -2px currentColor;
+}
+
+/* A node that arrived while the page was open. */
+.node-enter {
+  animation: node-enter 420ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes node-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+ * A quoted message.
+ *
+ * The exact text that left the building, framed the way a quotation is
+ * framed on a board: a heavy left edge and nothing else. Deliberately
+ * not a chat-app bubble - a rounded green balloon would be pretending
+ * to be WhatsApp rather than showing what WhatsApp was given.
+ */
+.quote {
+  border-left: 2px solid rgba(255, 253, 248, 0.28);
+  padding-left: 14px;
+}
+
+.quote-whatsapp {
+  border-left-color: rgba(173, 248, 148, 0.45);
+}
+
+.quote-email {
+  border-left-color: rgba(154, 234, 255, 0.4);
+}
+
+.quote-reply {
+  border-left-color: rgba(255, 232, 134, 0.5);
+}
+
+/*
+ * The call, as a waveform.
+ *
+ * Bars are seeded per case, so the same call always draws the same
+ * shape; the played portion is lit and the rest is dust. It is a
+ * transport control, not an oscilloscope - the audio itself is
+ * synthesised at demo time.
+ */
+.wave-bar {
+  width: 2px;
+  border-radius: 1px;
+  background: rgba(255, 253, 248, 0.22);
+  transition: background-color 120ms linear;
+}
+
+.wave-bar[data-played="true"] {
+  background: var(--color-waiting);
+}
+
+/* Attempt pips: used, remaining, and the cap drawn as a boundary. */
+.pip {
+  height: 6px;
+  flex: 1 1 0;
+  border-radius: 1px;
+  background: rgba(255, 253, 248, 0.14);
+}
+
+.pip[data-used="true"] {
+  background: var(--color-waiting);
+}
+
+.pip[data-used="true"][data-spent="true"] {
+  background: var(--color-halted);
+}
+
+/* A disclosure row that has to stay quiet until it is wanted. */
+.disclose {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--color-txt-faint);
+  transition: color 130ms ease;
+}
+
+.disclose:hover {
+  color: var(--color-txt);
+}
+
+.disclose:focus-visible {
+  outline: 2px solid #ffd76a;
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .node-enter {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------
+   Approvals Queue
+
+   The page where the board waits for a person. Everything here is
+   either a statement of the rule that stopped an action, or a control
+   for answering it - and the controls have to look like controls,
+   because this is the one page where a wrong click spends money.
+   --------------------------------------------------------------- */
+
+/* The rule an action was measured against, in the smallest words that
+   still mean something. Same hairline and 2px corner as .surface, so a
+   chip reads as another region of the board rather than a pill. */
+.policy-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 253, 248, 0.2);
+  border-radius: 2px;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-txt-faint);
+  white-space: nowrap;
+}
+
+/*
+ * Reject.
+ *
+ * The quiet button, with red held back until the pointer is on it. A
+ * permanently red control on a queue of seven reads as seven errors;
+ * red on hover reads as the consequence of the click you are about to
+ * make, which is what it is.
+ */
+.btn-op-danger:hover {
+  border-color: color-mix(in srgb, var(--color-halted) 60%, transparent);
+  background: color-mix(in srgb, var(--color-halted) 8%, transparent);
+  color: var(--color-halted);
+}
+
+/* The draft, opened for editing. Sunk into the board rather than raised
+   off it - an editable field is a hole in the slate, not a card. */
+.draft-field {
+  width: 100%;
+  border: 1px solid rgba(255, 253, 248, 0.22);
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 12px 14px;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--color-txt-dim);
+  resize: vertical;
+}
+
+.draft-field:focus-visible {
+  outline: 2px solid #ffd76a;
+  outline-offset: 2px;
+}
+
+/*
+ * A decision that cannot be taken by accident.
+ *
+ * Rejecting requires a reason, and a reason requires a dialog. It is
+ * opaque for the same reason the filter menu is: the board's grain
+ * showing through a modal makes the modal look optional.
+ */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(2, 3, 5, 0.74);
+}
+
+.modal-panel {
+  width: 100%;
+  max-width: 500px;
+  border: 1px solid rgba(255, 253, 248, 0.28);
+  border-radius: 2px;
+  background: #08090c;
+  box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.95);
+}
+
+.reason-option {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 9px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  padding: 7px 9px;
+  text-align: left;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-txt-dim);
+  transition:
+    background-color 110ms ease,
+    border-color 110ms ease,
+    color 110ms ease;
+}
+
+.reason-option:hover {
+  background: rgba(255, 253, 248, 0.05);
+  color: var(--color-txt);
+}
+
+.reason-option[data-selected="true"] {
+  border-color: rgba(255, 232, 134, 0.5);
+  color: var(--color-txt);
+}
+
+/*
+ * The receipt for a decision.
+ *
+ * Bottom-right, above the board's tooth layer, gone in a few seconds.
+ * It says what was done and to which case - a toast that only says
+ * "Saved" is a toast that taught the operator nothing.
+ */
+.toast-stack {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(380px, calc(100vw - 36px));
+  pointer-events: none;
+}
+
+.toast {
+  border: 1px solid rgba(255, 253, 248, 0.24);
+  border-radius: 2px;
+  background: #08090c;
+  padding: 11px 13px;
+  box-shadow: 0 18px 44px -22px rgba(0, 0, 0, 0.95);
+  animation: toast-in 260ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------
+   Simulation Lab
+
+   The evidence page (PRD 6.3, page 6). Two controls the console has
+   not needed until now - a slider and a typed number - plus the one
+   band the product allows itself to fill, because a headline that
+   reads as another region of the board is a headline nobody looks at
+   first.
+   --------------------------------------------------------------- */
+
+/*
+ * A slider, reduced to what a slider is: a groove and a mark on it.
+ * The track is the same dashed groove a chalk stroke is measured
+ * against, and the thumb is a square of chalk rather than a knob -
+ * the board has no glossy parts.
+ */
+.chalk-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.chalk-range::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(255, 253, 248, 0.2);
+}
+
+.chalk-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 13px;
+  width: 5px;
+  margin-top: -5.5px;
+  border-radius: 1px;
+  background: var(--color-txt);
+  box-shadow: 0 0 6px rgba(255, 253, 248, 0.35);
+}
+
+.chalk-range::-moz-range-track {
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(255, 253, 248, 0.2);
+}
+
+.chalk-range::-moz-range-thumb {
+  height: 13px;
+  width: 5px;
+  border: 0;
+  border-radius: 1px;
+  background: var(--color-txt);
+  box-shadow: 0 0 6px rgba(255, 253, 248, 0.35);
+}
+
+.chalk-range:focus-visible {
+  outline: 2px solid #ffd76a;
+  outline-offset: 4px;
+}
+
+.chalk-range:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* A number typed onto the board. Sunk in, like the draft field, because
+   an editable value is a hole in the slate rather than a card on it. */
+.seed-field {
+  width: 96px;
+  border: 1px solid rgba(255, 253, 248, 0.22);
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 5px 9px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-txt);
+}
+
+.seed-field:focus-visible {
+  outline: 2px solid #ffd76a;
+  outline-offset: 2px;
+}
+
+/*
+ * The headline band.
+ *
+ * The one filled region in the console, and it earns the exception:
+ * this single sentence is what the whole submission is graded on, and
+ * a hairline box around it would put it on the same footing as the
+ * root-cause table. The fill is chalk dust, not a colour - the money
+ * inside it is still the only green on the page.
+ */
+.headline-band {
+  position: relative;
+  border: 1px solid rgba(173, 248, 148, 0.34);
+  border-radius: 2px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(173, 248, 148, 0.07) 0%, transparent 62%),
+    rgba(255, 253, 248, 0.028);
+}
+
+/* A rule that fired zero times still gets a row (it is a guardrail
+   list, not a highlight reel), but it should not read as loud as one
+   that did. */
+.rule-idle td {
+  opacity: 0.5;
+}
+
+/* ---------------------------------------------------------------
+   Policies & Guardrails
+
+   The one page in the console that is a form, and the board makes
+   that awkward: a form is a grid of widgets, and nothing here is
+   allowed to look like a widget. So every control below is drawn
+   out of the same three things the rest of the slate is made of -
+   a hairline, a 2px corner, and a block of chalk. A switch is a
+   groove with a block in it; a number is a hole in the board with
+   two quiet handles either side.
+   --------------------------------------------------------------- */
+
+/*
+ * A switch.
+ *
+ * Not a pill with a circle in it - a groove scratched into the slate
+ * with a square of chalk sitting at one end of it. Off is a mark
+ * pushed aside; on is a mark in place, and the groove lights.
+ */
+.chalk-switch {
+  position: relative;
+  display: inline-flex;
+  height: 18px;
+  width: 34px;
+  flex-shrink: 0;
+  align-items: center;
+  border: 1px solid rgba(255, 253, 248, 0.22);
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 2px;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.chalk-switch::after {
+  content: "";
+  height: 12px;
+  width: 12px;
+  border-radius: 1px;
+  background: rgba(255, 253, 248, 0.3);
+  transform: translateX(0);
+  transition:
+    transform 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    background-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.chalk-switch[data-on="true"] {
+  border-color: rgba(255, 253, 248, 0.4);
+}
+
+.chalk-switch[data-on="true"]::after {
+  transform: translateX(16px);
+  background: var(--color-txt);
+  box-shadow: 0 0 7px rgba(255, 253, 248, 0.4);
+}
+
+/* Locked on. Amber rather than white so a rule nobody may touch does
+   not read as a rule somebody left on. */
+.chalk-switch[data-locked="true"] {
+  cursor: default;
+  border-color: rgba(255, 232, 134, 0.4);
+}
+
+.chalk-switch[data-locked="true"]::after {
+  background: var(--color-waiting);
+  box-shadow: 0 0 7px rgba(255, 232, 134, 0.4);
+}
+
+.chalk-switch:not([data-locked="true"]):hover {
+  border-color: rgba(255, 253, 248, 0.42);
+}
+
+.chalk-switch:focus-visible {
+  outline: 2px solid #ffd76a;
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chalk-switch::after {
+    transition: none;
+  }
+}
+
+/*
+ * A bounded number.
+ *
+ * Sunk into the board like the seed field and the draft box, because
+ * an editable value is a hole in the slate rather than a card on it.
+ * Handles rather than a spinner: the values on this page are caps and
+ * thresholds, and every one of them has a step that means something.
+ */
+.stepper {
+  display: inline-flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid rgba(255, 253, 248, 0.22);
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.stepper-btn {
+  display: grid;
+  width: 24px;
+  place-items: center;
+  color: var(--color-txt-faint);
+  transition:
+    color 120ms ease,
+    background-color 120ms ease;
+}
+
+.stepper-btn:hover:not(:disabled) {
+  background: rgba(255, 253, 248, 0.07);
+  color: var(--color-txt);
+}
+
+.stepper-btn:disabled {
+  cursor: default;
+  opacity: 0.28;
+}
+
+.stepper-btn:focus-visible {
+  outline: 2px solid #ffd76a;
+  outline-offset: -2px;
+}
+
+.stepper-value {
+  min-width: 72px;
+  border-inline: 1px solid rgba(255, 253, 248, 0.14);
+  padding: 5px 6px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-txt);
+  white-space: nowrap;
+}
+
+/*
+ * A field with an unsaved edit on it.
+ *
+ * Marked where it was changed rather than only listed in a summary at
+ * the bottom: a save bar saying "6 changes" and no indication of which
+ * six is a save bar that gets clicked without being read.
+ */
+.policy-row {
+  position: relative;
+  border-radius: 2px;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.policy-row[data-changed="true"] {
+  background: rgba(255, 232, 134, 0.045);
+  box-shadow: inset 2px 0 0 var(--color-waiting);
+}
+
+/* A rule that has been switched off is still on the page - it has to
+   be, or the list stops being the list of guardrails - but it should
+   read as absent. */
+.policy-row[data-off="true"] .policy-dim {
+  opacity: 0.5;
+}
+
+/*
+ * Quiet hours, as a day.
+ *
+ * Forty-eight half-hour marks in a row. The blocked stretch is the one
+ * that matters, so it is the one that is drawn: allowed hours are dust,
+ * blocked hours are amber, and the boundary is where the two meet
+ * rather than a number a reader has to picture.
+ */
+.day-band {
+  display: flex;
+  height: 26px;
+  gap: 1.5px;
+  align-items: stretch;
+}
+
+.day-tick {
+  flex: 1 1 0;
+  border-radius: 1px;
+  background: rgba(255, 253, 248, 0.13);
+  transition: background-color 160ms ease;
+}
+
+.day-tick[data-quiet="true"] {
+  background: color-mix(in srgb, var(--color-waiting) 42%, transparent);
+}
+
+/* The hour a boundary falls on, drawn full-height so the edge is exact. */
+.day-tick[data-edge="true"] {
+  background: var(--color-txt);
+}
+
+/*
+ * The save bar.
+ *
+ * Sticky at the foot of the page and opaque, for the same reason the
+ * header is: globals lift every control above the board's tooth layer,
+ * so a transparent bar would have the page's own buttons painting
+ * straight through it as they scrolled past.
+ */
+.save-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 62;
+  margin-top: 4px;
+  background: var(--slate-base);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .day-tick,
+  .policy-row {
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------
+   Audit Explorer
+
+   The ledger is a table the board already knows how to draw, so
+   there is almost nothing here. What it does need: a row that
+   opens, a row that failed verification, and a way to stop the
+   hover wash from painting over an expanded panel.
+   --------------------------------------------------------------- */
+
+/* An opened row's panel is not a row. It gets no hover, no bottom
+   rule, and a darker ground so the payload inside reads as a thing
+   set into the board rather than another line of the table. */
+.optable tbody tr.expanded-row:hover td {
+  background: transparent;
+}
+
+.optable tbody tr.expanded-row td {
+  border-bottom: 1px solid rgba(255, 253, 248, 0.09);
+}
+
+/* A row whose digest did not reproduce. Marked on the row itself as
+   well as in the verdict above, because a count of failures with no
+   way to find them is a count nobody can act on. */
+.optable tbody tr[data-broken="true"] td {
+  background: color-mix(in srgb, var(--color-halted) 9%, transparent);
+  box-shadow: inset 2px 0 0 var(--color-halted);
+}
+
+.optable tbody tr[data-broken="true"]:hover td {
+  background: color-mix(in srgb, var(--color-halted) 14%, transparent);
+}
+
+/* ---------------------------------------------------------------
+   Boa's face
+
+   A two-frame sheet - eyes open, eyes closed - shown one frame at a
+   time through a round window. The frames sit side by side, so the
+   whole animation is a horizontal jump of exactly half the sheet.
+   --------------------------------------------------------------- */
+.boa-face {
+  position: relative;
+  display: block;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+/*
+ * Selector is two classes deep on purpose: globals lifts every image
+ * on the board with `.slate :where(img) { position: relative }`, and
+ * a sprite that is relatively positioned is a sprite that cannot be
+ * offset into its own frame.
+ */
+.boa-face .boa-sheet {
+  position: absolute;
+  left: var(--boa-face-x);
+  top: var(--boa-face-y);
+  width: var(--boa-sheet-w);
+  max-width: none;
+  height: auto;
+  animation: boa-blink 2.8s steps(1, end) infinite;
+}
+
+/*
+ * The rhythm: a pair of quick blinks, a beat, then a single one -
+ * three blinks every 2.8 seconds.
+ *
+ * Evenly spaced blinks read as a metronome, and a real face blinks in
+ * clusters, so the gaps are deliberately unequal. Each closure is
+ * ~112ms, which is about how long a human blink lasts: long enough to
+ * register, short enough that it never reads as the face pausing.
+ *
+ * `steps(1, end)` on the animation is what makes each keyframe a jump
+ * rather than a slide: translateX interpolates by default, and an
+ * interpolated frame swap drags the second boat across the window.
+ */
+@keyframes boa-blink {
+  0% {
+    transform: translateX(0);
+  }
+  40% {
+    transform: translateX(-50%);
+  }
+  44% {
+    transform: translateX(0);
+  }
+  52% {
+    transform: translateX(-50%);
+  }
+  56% {
+    transform: translateX(0);
+  }
+  86% {
+    transform: translateX(-50%);
+  }
+  90% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+/* Eyes open, and left that way. */
+@media (prefers-reduced-motion: reduce) {
+  .boa-face .boa-sheet {
+    animation: none;
+    transform: translateX(0);
+  }
+}

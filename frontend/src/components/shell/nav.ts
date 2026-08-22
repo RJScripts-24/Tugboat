@@ -36,6 +36,11 @@ export const NAV: NavItem[] = [
 ];
 
 export function titleFor(pathname: string): string {
+  // One case is not the pipeline. The rail still highlights Pipeline, because
+  // that is where the case lives, but the heading has to name the page you are
+  // actually on or it reads as a stale header.
+  if (/^\/cases\/[^/]+$/.test(pathname)) return "Case Detail";
+
   const match = NAV.find(
     (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
   );

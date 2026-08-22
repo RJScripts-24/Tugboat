@@ -48,8 +48,12 @@ export function CasesTable({ rows }: { rows: CaseRow[] }) {
               return (
                 <tr key={row.id}>
                   <td>
+                    {/* Straight to the case, not to the list with the row
+                        picked out. Someone who clicks a case id here wants the
+                        case; sending them to the Pipeline first put an
+                        unlabelled second click between them and it. */}
                     <Link
-                      href={`/cases?case=${row.id}`}
+                      href={`/cases/${row.id}`}
                       className="mono text-txt underline-offset-2 hover:underline"
                     >
                       {row.id}

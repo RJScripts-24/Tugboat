@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { ChalkFilters } from "@/components/dashboard/chalk";
+import { getPendingApprovalCount } from "@/lib/approvals-data";
 import { Sidebar } from "@/components/shell/sidebar";
 import { TopBar } from "@/components/shell/top-bar";
 import { getShellStatus } from "@/lib/dashboard-data";
@@ -35,13 +36,16 @@ export default async function ControlTowerLayout({
   if (!signInModeOf(session?.value)) redirect("/login");
 
   const status = getShellStatus();
+  // Counted from the queue rather than carried beside it: the badge and the
+  // Approvals page have to be the same number or neither is worth showing.
+  const pendingApprovals = getPendingApprovalCount();
 
   return (
     <div className={`slate chalk min-h-svh ${chalkHand.variable}`}>
       <ChalkFilters />
 
       <Sidebar
-        pendingApprovals={status.pendingApprovals}
+        pendingApprovals={pendingApprovals}
         recoveredTodayPaise={status.recoveredTodayPaise}
         activeCases={status.activeCases}
       />
@@ -49,7 +53,7 @@ export default async function ControlTowerLayout({
       <div className="lg:pl-[236px]">
         <TopBar
           merchantName={DEMO_MERCHANT.displayName}
-          pendingApprovals={status.pendingApprovals}
+          pendingApprovals={pendingApprovals}
           policyVersion={status.policyVersion}
         />
         <main className="px-4 pb-10 pt-4 sm:px-5">{children}</main>
