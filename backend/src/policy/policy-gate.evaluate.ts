@@ -1,7 +1,12 @@
 import type { ApprovalGate, CaseStage, CaseType, CustomerSegment, Sentiment } from "@prisma/client";
 
 import { alignToPayday, formatClock, isQuiet, istMinuteOfDay, nextWindowOpen } from "./ist-clock";
-import { CHANNEL_LABELS, SILENT_CHANNELS, type PolicyChannel, type PolicyPack } from "./policy-pack";
+import {
+  CHANNEL_LABELS,
+  SILENT_CHANNELS,
+  type PolicyChannel,
+  type PolicyPack,
+} from "./policy-pack";
 
 /**
  * PRD §9, as one pure function.
@@ -58,6 +63,13 @@ export type GateAction = {
   discountPercent?: number;
   /** When the action would run. Defaults to now. */
   at?: Date;
+  /**
+   * A named human's answer to the escalation gates, carried back in when an
+   * approved action is executed. Clears the gates that ask a person a question
+   * — and nothing else: the caps, the cool-down, quiet hours, the sentiment
+   * halt and the opt-out are bounds, not questions, and no approval lifts them.
+   */
+  approvedBy?: { gate: ApprovalGate; by: string; at: Date };
 };
 
 export type Evaluation = {
@@ -133,7 +145,8 @@ export function evaluateGate(
     checks: steps.map((step) => step.check),
     gate: outcome.kind === "approve" ? outcome.gate : null,
     rescheduledFor: outcome.kind === "defer" ? outcome.until : null,
-    terminalStage: outcome.kind === "halt" ? "halted" : outcome.kind === "exhaust" ? "exhausted" : null,
+    terminalStage:
+      outcome.kind === "halt" ? "halted" : outcome.kind === "exhaust" ? "exhausted" : null,
   };
 }
 
@@ -390,6 +403,21 @@ function escalationGate(subject: GateSubject, action: GateAction, pack: PolicyPa
     };
   }
 
+  // An approval answers every escalation gate at once, not only the one that
+  // was named. The approver was shown the amount, the customer, the confidence
+  // and the exact message; clearing one gate and then stopping the same action
+  // at the next would be asking the same person the same question twice.
+  if (action.approvedBy) {
+    const { gate, by, at } = action.approvedBy;
+    return {
+      check: {
+        name: "Escalation gate",
+        verdict: "skip",
+        note: `Cleared by ${by} at ${at.toISOString().slice(11, 16)} UTC · gate ${gate}`,
+      },
+    };
+  }
+
   // The order of the gates below IS their precedence, and it is a product
   // decision: when several apply, the approvals queue should name the one that
   // most changes what the human ought to do. Hardship outranks a discount ask,
@@ -497,7 +525,11 @@ function channelEnabled(
   }
 
   return {
-    check: { name: "Channel enabled", verdict: "pass", note: `${label} is enabled in policy ${version}` },
+    check: {
+      name: "Channel enabled",
+      verdict: "pass",
+      note: `${label} is enabled in policy ${version}`,
+    },
   };
 }
 
@@ -646,7 +678,12 @@ export function decisionRows(
   }
 
   if (evaluation.terminalStage) {
-    rows.push({ label: "Case closes", value: evaluation.terminalStage.toUpperCase(), mono: true, tone: "halted" });
+    rows.push({
+      label: "Case closes",
+      value: evaluation.terminalStage.toUpperCase(),
+      mono: true,
+      tone: "halted",
+    });
   }
 
   return rows;

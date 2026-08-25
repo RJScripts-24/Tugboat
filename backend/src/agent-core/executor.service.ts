@@ -1,6 +1,8 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import type { Action, Case, Customer, Prisma } from "@prisma/client";
+import type { Action, ApprovalGate, Case, Customer, Prisma } from "@prisma/client";
 
+import { APPROVAL_CLOSES, ApprovalsService } from "../approvals/approvals.service";
+import type { DraftMessage } from "../approvals/ask-builder";
 import {
   CHANNEL_ADAPTERS,
   CHANNEL_MODE_LABEL,
@@ -88,6 +90,7 @@ export class ExecutorService {
     private readonly planner: PlannerService,
     private readonly gate: PolicyGateService,
     private readonly policy: PolicyService,
+    private readonly approvals: ApprovalsService,
     @Inject(CHANNEL_ADAPTERS) private readonly adapters: Map<string, ChannelAdapter>,
     @Inject(ACTION_QUEUE) private readonly queue: ActionQueue,
   ) {}
@@ -210,7 +213,7 @@ export class ExecutorService {
       }
 
       if (verdict.outcome.kind === "approve") {
-        return this.escalate(record, verdict.outcome.reason, verdict.outcome.gate);
+        return this.escalate(record, verdict.outcome.reason, verdict.outcome.gate, plan.channel);
       }
 
       if (verdict.outcome.kind === "halt") {
@@ -379,10 +382,15 @@ export class ExecutorService {
     const detail = result.detail;
 
     if (detail.kind === "retry" && detail.captured) {
-      await this.cases.transition(record.id, "recovered", retryEvent(record, plan, result, detail), {
-        ...spend,
-        recoveredAmountPaise: record.amountPaise,
-      });
+      await this.cases.transition(
+        record.id,
+        "recovered",
+        retryEvent(record, plan, result, detail),
+        {
+          ...spend,
+          recoveredAmountPaise: record.amountPaise,
+        },
+      );
       await this.cases.appendEvent(record.id, recoveredEvent(record, result.channelRef));
       this.logger.log(`${toCaseRef(record.id)} RECOVERED ${inr(record.amountPaise)} rupees`);
       return {
@@ -418,6 +426,11 @@ export class ExecutorService {
         record.id,
         escalatedEvent("Hardship language on the call — the agent stood down", "hardship_language"),
       );
+      await this.approvals.raise({
+        caseId: record.id,
+        gate: "hardship_language",
+        channel: plan.channel,
+      });
       return { kind: "escalated", reason: "Hardship declared on the call" };
     }
 
@@ -517,14 +530,281 @@ export class ExecutorService {
   }
 
   /* ---------------------------------------------------------------- */
+  /* Releasing what a human approved                                   */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Sends the message a merchant signed off — after checking it again.
+   *
+   * The second gate run is the point of this method. An approval is a
+   * permission, not a send button: between the click and the release the
+   * customer may have replied STOP, the quiet window may have closed, the
+   * channel cap may have been spent by another job, or the case may have
+   * recovered on its own. Only the escalation gates are cleared by an approval
+   * (D-66); every bound that exists to protect a person still applies, so an
+   * approved message to somebody who has since opted out halts rather than
+   * going out.
+   */
+  async releaseApproved(approvalId: string): Promise<StepOutcome> {
+    const approval = await this.prisma.approval.findUnique({
+      where: { id: approvalId },
+      include: { case: { include: { customer: true } }, action: true },
+    });
+
+    if (!approval) return { kind: "skipped", reason: `Approval ${approvalId} no longer exists` };
+    if (approval.decision !== "approved") {
+      return {
+        kind: "skipped",
+        reason: `Approval ${approvalId} is ${approval.decision ?? "still open"}`,
+      };
+    }
+
+    const record = approval.case;
+    if (TERMINAL_STAGES.includes(record.stage)) {
+      return { kind: "skipped", reason: `Case is already ${record.stage}` };
+    }
+
+    // Read the claim before running the gate, not after. A redelivered release
+    // of an action that has already been sent must be a no-op — running the
+    // gate first would defer it on the cool-down its own send just started and
+    // re-queue a job for work that is finished (B-22).
+    if (approval.action && approval.action.status !== "NEEDS_APPROVAL") {
+      return {
+        kind: "skipped",
+        reason: `Approval ${approvalId} has already been released (${approval.action.status})`,
+      };
+    }
+
+    const draft = approval.draft as unknown as DraftMessage;
+    const payload = (approval.action?.payload ?? {}) as { discountPercent?: number | null };
+
+    const verdict = await this.gate.check(record.id, {
+      channel: draft.channel,
+      concessionPaise: approval.concessionPaise,
+      discountPercent: payload.discountPercent ?? undefined,
+      approvedBy: {
+        gate: approval.gate,
+        by: approval.decidedBy ?? "a merchant",
+        at: approval.decidedAt ?? new Date(),
+      },
+    });
+
+    if (verdict.outcome.kind === "defer") {
+      const { until, reason } = verdict.outcome;
+      await this.cases.moveStage(record.id, "waiting", reason);
+      await this.queue.enqueue(
+        {
+          kind: "approval.release",
+          caseId: record.id,
+          jobId: `approval:${approval.id}:release`,
+          reason,
+          approvalId: approval.id,
+        },
+        { delayMs: Math.max(0, until.getTime() - Date.now()) },
+      );
+      return { kind: "deferred", until, reason };
+    }
+
+    if (verdict.outcome.kind === "halt") {
+      return this.close(record, "halted", verdict.outcome.reason);
+    }
+
+    if (verdict.outcome.kind === "exhaust") {
+      return this.close(record, "exhausted", verdict.outcome.reason);
+    }
+
+    if (verdict.outcome.kind !== "allow") {
+      // A refusal on a released action is not "try the next rung": the human
+      // approved this message, not a substitute for it.
+      return this.close(
+        record,
+        "halted",
+        `The approved action was refused at execution: ${verdict.outcome.reason}`,
+      );
+    }
+
+    return this.sendApproved(record, draft, verdict.pass!, approval);
+  }
+
+  private async sendApproved(
+    record: Case & { customer: Customer },
+    draft: DraftMessage,
+    pass: GatePassOf,
+    approval: {
+      id: string;
+      gate: ApprovalGate;
+      actionId: string | null;
+      decidedBy: string | null;
+      headline: string;
+    },
+  ): Promise<StepOutcome> {
+    const adapter = this.adapters.get(draft.channel);
+    if (!adapter) throw new Error(`No adapter registered for channel ${draft.channel}`);
+
+    // Compare-and-set on the row the gate already stopped: the action leaves
+    // NEEDS_APPROVAL exactly once, so a redelivered release job loses the race
+    // rather than sending a second copy.
+    if (approval.actionId) {
+      const claimed = await this.prisma.action.updateMany({
+        where: { id: approval.actionId, status: "NEEDS_APPROVAL" },
+        data: { status: "PLANNED" },
+      });
+
+      if (claimed.count !== 1) {
+        return { kind: "skipped", reason: `Approval ${approval.id} has already been released` };
+      }
+    }
+
+    const merchant = await this.prisma.merchant.findUniqueOrThrow({
+      where: { id: record.merchantId },
+    });
+
+    const attempt = record.attemptsUsed + 1;
+    const plan: PlanProposal = {
+      channel: draft.channel,
+      attempt,
+      chosen: approval.headline,
+      because: `Approved by ${approval.decidedBy ?? "a merchant"} · gate ${approval.gate}`,
+      rejected: [
+        {
+          option: "Send it without asking",
+          reason: `The ${approval.gate} gate refused it; only a human could release this`,
+        },
+      ],
+      delayMs: 0,
+      source: "playbook",
+    };
+
+    let result: ChannelSendResult;
+    try {
+      result = await adapter.send(pass, {
+        caseId: record.id,
+        attempt,
+        to: contactFor(draft.channel, record.customer),
+        copy: this.planner.copyContext(record, record.customer, merchant.displayName, attempt),
+        // Verbatim: the approver read this body and may have rewritten it, so
+        // re-deriving copy here would send something nobody signed off.
+        approved: { lines: draft.lines, subject: draft.subject },
+      });
+    } catch (error) {
+      const message = (error as Error).message;
+      if (approval.actionId) {
+        await this.prisma.action.update({
+          where: { id: approval.actionId },
+          data: { status: "FAILED", failureReason: message },
+        });
+      }
+      this.logger.error(`${toCaseRef(record.id)} approved ${draft.channel} failed: ${message}`);
+      return this.escalate(
+        record,
+        `The approved ${draft.channel} could not be delivered: ${message}`,
+        null,
+      );
+    }
+
+    if (approval.actionId) {
+      await this.prisma.action.update({
+        where: { id: approval.actionId },
+        data: {
+          status: "EXECUTED",
+          executedAt: new Date(),
+          channelRef: result.channelRef,
+          costPaise: result.costPaise,
+          payload: result.detail as unknown as Prisma.InputJsonValue,
+        },
+      });
+    }
+
+    const spend = { attemptsUsed: { increment: 1 }, costPaise: { increment: result.costPaise } };
+    const detail = result.detail;
+
+    if (detail.kind === "retry" && detail.captured) {
+      await this.cases.transition(
+        record.id,
+        "recovered",
+        retryEvent(record, plan, result, detail),
+        {
+          ...spend,
+          recoveredAmountPaise: record.amountPaise,
+        },
+      );
+      await this.cases.appendEvent(record.id, recoveredEvent(record, result.channelRef));
+      return {
+        kind: "sent",
+        channel: draft.channel,
+        channelRef: result.channelRef,
+        stage: "recovered",
+      };
+    }
+
+    const event =
+      detail.kind === "retry"
+        ? retryEvent(record, plan, result, detail)
+        : detail.kind === "voice"
+          ? voiceEvent(record.customer, result, detail)
+          : messageEvent(record, record.customer, plan, result, detail);
+
+    // A stand-down offer is sent once and followed by nothing. Every other
+    // approved action resumes the playbook inside the bounds it already had.
+    if (APPROVAL_CLOSES[approval.gate]) {
+      await this.prisma.case.update({ where: { id: record.id }, data: spend });
+      await this.cases.appendEvent(record.id, event);
+      return this.close(
+        { ...record, attemptsUsed: attempt },
+        "halted",
+        `${approval.decidedBy ?? "A merchant"} approved a stand-down offer · sent once, and this case is closed to further contact`,
+      );
+    }
+
+    await this.cases.transition(record.id, "waiting", event, spend);
+    await this.scheduleFollowUp(record, draft.channel);
+
+    return {
+      kind: "sent",
+      channel: draft.channel,
+      channelRef: result.channelRef,
+      stage: "waiting",
+    };
+  }
+
+  /* ---------------------------------------------------------------- */
   /* Endings                                                           */
   /* ---------------------------------------------------------------- */
 
-  private async escalate(record: Case, reason: string, gate: string | null): Promise<StepOutcome> {
-    if (record.stage === "escalated") {
+  /**
+   * The case stops and a person is asked.
+   *
+   * A gate name means the PolicyGate refused on one of the four escalation
+   * gates, and the approvals queue gets a card carrying the exact message that
+   * was stopped. Without one, the escalation is operational — an adapter that
+   * threw, a promise that passed its date — and there is no question a merchant
+   * can answer on a card, so the case surfaces on the pipeline with its reason
+   * on the timeline and no request is raised (D-69).
+   */
+  private async escalate(
+    record: Case,
+    reason: string,
+    gate: ApprovalGate | null,
+    channel?: PolicyChannel,
+  ): Promise<StepOutcome> {
+    // Read the stage now rather than trusting the copy this step began with:
+    // `recordPlan` has already moved an escalated case back to `intervening` on
+    // its way here, so the captured value says "escalated" while the row says
+    // otherwise — and taking the append-only branch on it leaves a case that is
+    // waiting on a human looking, on the pipeline, like one being worked (B-23).
+    const current = await this.prisma.case.findUnique({
+      where: { id: record.id },
+      select: { stage: true },
+    });
+
+    if (current?.stage === "escalated") {
       await this.cases.appendEvent(record.id, escalatedEvent(reason, gate));
     } else {
       await this.cases.transition(record.id, "escalated", escalatedEvent(reason, gate));
+    }
+
+    if (gate) {
+      await this.approvals.raise({ caseId: record.id, gate, channel: channel ?? "WHATSAPP" });
     }
 
     return { kind: "escalated", reason };
@@ -720,7 +1000,7 @@ function recoveredEvent(record: Case, channelRef: string) {
   };
 }
 
-function escalatedEvent(reason: string, gate: string | null) {
+function escalatedEvent(reason: string, gate: ApprovalGate | null) {
   return {
     kind: "ESCALATED" as const,
     title: "Escalated to a human",

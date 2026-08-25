@@ -484,3 +484,112 @@ describe("PolicyGate — verdict precedence", () => {
     expect(result.terminalStage).toBe("halted");
   });
 });
+
+/**
+ * What an approval does and — more importantly — what it does not.
+ *
+ * The Stage 6 release path re-runs this function with the approver's name
+ * attached. The gates that ask a person a question are answered; the bounds
+ * that protect a person are not, because "a human said yes" is not a fact about
+ * the customer's consent, their quiet hours, or the number of times they have
+ * already been contacted.
+ */
+describe("PolicyGate — an approved action, checked again", () => {
+  const APPROVED = {
+    gate: "b2b_high_value" as const,
+    by: "Demo Merchant",
+    at: new Date("2026-08-24T09:05:00.000Z"),
+  };
+
+  it("clears the escalation gate that stopped it", () => {
+    const over = subject({ amountPaise: 60_000 * RUPEE });
+
+    expect(run(over, action()).verdict).toBe("needs_approval");
+    expect(run(over, action({ approvedBy: APPROVED })).verdict).toBe("allowed");
+  });
+
+  it("clears every escalation gate at once, not only the one that was named", () => {
+    // Cleared for value, but B2B and a low confidence would each have fired
+    // next. Asking the same person the same question twice is not a guardrail.
+    const layered = subject({
+      amountPaise: 60_000 * RUPEE,
+      segment: "B2B",
+      diagnosisConfidence: 0.41,
+    });
+
+    expect(run(layered, action()).verdict).toBe("needs_approval");
+    expect(run(layered, action({ approvedBy: APPROVED })).verdict).toBe("allowed");
+  });
+
+  it("names the approver in the check the timeline renders", () => {
+    const result = run(subject({ segment: "B2B" }), action({ approvedBy: APPROVED }));
+    const check = find(result.checks, "Escalation gate");
+
+    expect(check.verdict).toBe("skip");
+    expect(check.note).toContain("Demo Merchant");
+    expect(check.note).toContain("b2b_high_value");
+  });
+
+  it("still refuses a discount above the cap a human is allowed to grant", () => {
+    // Nobody here may approve 40%: queueing it asked for something that cannot
+    // be given, and clearing it on approval would grant it anyway.
+    const result = run(
+      subject(),
+      action({ concessionPaise: 1_920 * RUPEE, discountPercent: 40, approvedBy: APPROVED }),
+    );
+
+    expect(result.verdict).toBe("blocked");
+    expect(result.outcome).toMatchObject({ kind: "refuse" });
+  });
+
+  it("does not override an opt-out", () => {
+    const result = run(
+      subject({ optedOutAt: new Date("2026-08-20T00:00:00.000Z") }),
+      action({ approvedBy: APPROVED }),
+    );
+
+    expect(result.verdict).toBe("blocked");
+    expect(result.outcome).toMatchObject({ kind: "halt" });
+    expect(result.terminalStage).toBe("halted");
+  });
+
+  it("does not override the attempt cap", () => {
+    const result = run(subject({ attemptsUsed: 4 }), action({ approvedBy: APPROVED }));
+
+    expect(result.outcome).toMatchObject({ kind: "exhaust" });
+  });
+
+  it("does not override a channel cap", () => {
+    const result = run(
+      subject({ channelUsage: { WHATSAPP: 2, EMAIL: 0, VOICE: 0, RETRY: 0 } }),
+      action({ approvedBy: APPROVED }),
+    );
+
+    expect(result.outcome).toMatchObject({ kind: "refuse" });
+  });
+
+  it("does not override quiet hours — it defers the approved message instead", () => {
+    const result = run(subject(), action({ at: NIGHT, approvedBy: APPROVED }));
+
+    expect(result.outcome).toMatchObject({ kind: "defer" });
+    expect(result.rescheduledFor).not.toBeNull();
+  });
+
+  it("does not override the sentiment halt", () => {
+    const result = run(
+      subject({ lastSentiment: "negative", lastSentimentScore: -0.82 }),
+      action({ approvedBy: APPROVED }),
+    );
+
+    expect(result.outcome).toMatchObject({ kind: "halt" });
+  });
+
+  it("does not override the cool-down", () => {
+    const result = run(
+      subject({ lastContactAt: new Date(MIDDAY.getTime() - 2 * HOUR) }),
+      action({ approvedBy: APPROVED }),
+    );
+
+    expect(result.outcome).toMatchObject({ kind: "defer" });
+  });
+});

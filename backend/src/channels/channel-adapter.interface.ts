@@ -24,6 +24,17 @@ export type VoiceIntent = "PROMISED_TO_PAY" | "HARDSHIP_DECLARED" | "NO_ANSWER";
 /** How the scripted counterpart behaves. Stage 8's personas replace the default. */
 export type VoiceCounterpart = "promise" | "decline" | "no-answer";
 
+/**
+ * A body that has already been read and signed off by a person.
+ *
+ * An approver is shown the exact message and may rewrite it before saying yes,
+ * so what leaves the building has to be that text rather than copy re-derived
+ * at send time from a case that has since moved. Only the message channels
+ * honour it: a retry has no body, and a voice call is a conversation rather
+ * than a script.
+ */
+export type ApprovedBody = { lines: string[]; subject?: string };
+
 export type SendRequest = {
   caseId: number;
   attempt: number;
@@ -33,6 +44,7 @@ export type SendRequest = {
   counterpart?: VoiceCounterpart;
   /** Set when a promise is being sought, so the script can name a date. */
   promiseDateLabel?: string;
+  approved?: ApprovedBody;
 };
 
 export type RetryDetail = {

@@ -42,9 +42,11 @@ export class CasesController {
   /**
    * GET /cases/:id — Case Detail.
    *
-   * `pending` and `audit` are empty by fact, not by omission: no action has been
-   * scheduled until the Executor exists (Stage 5) and no ledger row is written
-   * until the audit module does (Stage 7).
+   * `pending` and `audit` are still empty, and honestly so. Scheduled work now
+   * exists as `actions` rows carrying a `scheduledFor`, but projecting it into
+   * the timeline's shape belongs with the frontend wiring in Stage 9; ledger
+   * rows do not exist at all until the audit module lands in Stage 7. An
+   * invented placeholder in either would be worse than an empty list.
    */
   @Get(":id")
   async detail(@CurrentMerchant() merchant: SessionClaims, @Param("id") id: string) {

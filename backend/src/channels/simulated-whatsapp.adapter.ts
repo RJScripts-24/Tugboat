@@ -14,7 +14,9 @@ export class SimulatedWhatsappAdapter implements ChannelAdapter {
   readonly mode = "simulated" as const;
 
   async send(pass: GatePass, request: SendRequest): Promise<ChannelSendResult> {
-    const lines = whatsappCopy(request.copy);
+    // An approved draft is sent as the approver left it; only an unattended
+    // send derives its own copy.
+    const lines = request.approved?.lines ?? whatsappCopy(request.copy);
     const read = seededUnit(`${pass.caseId}/wa/${request.attempt}/read`) < 0.71;
 
     return {

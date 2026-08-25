@@ -31,10 +31,7 @@ export class AgentWorker implements OnApplicationBootstrap {
 
   async handle(job: QueuedJob): Promise<void> {
     try {
-      const outcome =
-        job.kind === "promise.checkin" && job.promiseId
-          ? await this.executor.checkPromise(job.promiseId)
-          : await this.executor.step(job.caseId, { expectAttempt: job.expectAttempt });
+      const outcome = await this.run(job);
 
       this.logger.log(`${job.jobId} -> ${outcome.kind} (${job.reason})`);
     } catch (error) {
@@ -43,5 +40,19 @@ export class AgentWorker implements OnApplicationBootstrap {
       this.logger.error(`${job.jobId} threw: ${(error as Error).message}`);
       throw error;
     }
+  }
+
+  private run(job: QueuedJob) {
+    if (job.kind === "promise.checkin" && job.promiseId) {
+      return this.executor.checkPromise(job.promiseId);
+    }
+
+    // A release is not a step: the message was chosen by a human, so the
+    // Executor re-checks it and sends that body rather than planning a new one.
+    if (job.kind === "approval.release" && job.approvalId) {
+      return this.executor.releaseApproved(job.approvalId);
+    }
+
+    return this.executor.step(job.caseId, { expectAttempt: job.expectAttempt });
   }
 }

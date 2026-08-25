@@ -13,7 +13,13 @@ export type JobKind =
   /** Take the next step on a case: plan, gate, execute. */
   | "case.step"
   /** A promised payment date has arrived; check whether it was kept. */
-  | "promise.checkin";
+  | "promise.checkin"
+  /**
+   * A human approved a request; run the gate again and send what they signed
+   * off. Queued rather than done inline, because the world may have changed
+   * between the click and the send (D-67).
+   */
+  | "approval.release";
 
 export type QueuedJob = {
   kind: JobKind;
@@ -23,6 +29,7 @@ export type QueuedJob = {
   /** Why this job exists, for the log and for the case timeline. */
   reason: string;
   promiseId?: string;
+  approvalId?: string;
   /**
    * The attempt count this job was scheduled against.
    *

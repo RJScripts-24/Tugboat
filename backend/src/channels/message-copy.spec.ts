@@ -1,4 +1,12 @@
-import { OPT_OUT_LINE, emailCopy, whatsappCopy, type CopyContext } from "./message-copy";
+import {
+  OPT_OUT_LINE,
+  discountCopy,
+  emailCopy,
+  ensureOptOut,
+  hardshipCopy,
+  whatsappCopy,
+  type CopyContext,
+} from "./message-copy";
 import { matchOptOut } from "../conversation/opt-out";
 
 const ROOT_CAUSES = [
@@ -130,3 +138,112 @@ describe("email copy", () => {
 function describeVariant(variant: CopyContext): string {
   return `${variant.type}/${variant.rootCause}/${variant.hinglish ? "hi" : "en"}/attempt ${variant.attempt}`;
 }
+
+/**
+ * Copy that only a human can release.
+ *
+ * These two variants are unreachable by the agent alone — the escalation gate
+ * stops any action carrying a concession, and a hardship flag halts everything
+ * — but they are still customer-facing messages, so they are held to the same
+ * rules as the ones Boa sends unattended.
+ */
+describe("approval-only copy", () => {
+  const bodies = [false, true].flatMap((hinglish) => [
+    ["discount/" + (hinglish ? "hi" : "en"), discountCopy(ctx({ hinglish }), 12)] as const,
+    [
+      "hardship-plan/" + (hinglish ? "hi" : "en"),
+      hardshipCopy(ctx({ hinglish }), { plan: true, instalmentPaise: 160_000, email: false }).lines,
+    ] as const,
+    [
+      "hardship-close/" + (hinglish ? "hi" : "en"),
+      hardshipCopy(ctx({ hinglish }), { plan: false, instalmentPaise: 0, email: false }).lines,
+    ] as const,
+  ]);
+
+  it.each(bodies)("%s ends with the opt-out line", (_label, lines) => {
+    expect(lines.at(-1)).toBe(OPT_OUT_LINE);
+  });
+
+  it.each(bodies)("%s never threatens", (_label, lines) => {
+    const body = lines.join(" ").toLowerCase();
+    for (const word of ["legal", "court", "recovery agent", "penalty", "police", "blacklist"]) {
+      expect(body).not.toContain(word);
+    }
+  });
+
+  it.each(bodies)("%s uses the first name only", (_label, lines) => {
+    const body = lines.join(" ");
+    expect(body).toContain("Ananya");
+    expect(body).not.toContain("Ananya Sharma");
+  });
+
+  it.each(bodies)("%s does not read as the customer opting out", (_label, lines) => {
+    expect(matchOptOut(lines.join("\n"))).toBeNull();
+  });
+
+  it("states both the original and the discounted figure", () => {
+    const lines = discountCopy(ctx(), 12).join(" ");
+    expect(lines).toContain("₹4,800");
+    expect(lines).toContain("₹4,224");
+  });
+
+  it("introduces Boa on the merchant's behalf when it is offering money back", () => {
+    expect(discountCopy(ctx(), 12)[0]).toContain("Boa");
+    expect(discountCopy(ctx(), 12)[0]).toContain("Demo Merchant");
+  });
+
+  it("asks a customer in hardship for nothing", () => {
+    const lines = hardshipCopy(ctx(), { plan: true, instalmentPaise: 160_000, email: false })
+      .lines.join(" ")
+      .toLowerCase();
+
+    expect(lines).toContain("paused all reminders");
+    expect(lines).not.toContain("pay now");
+    expect(lines).not.toContain("complete it");
+  });
+
+  it("does not offer a plan in the message when it is closing quietly", () => {
+    const lines = hardshipCopy(ctx(), { plan: false, instalmentPaise: 0, email: false }).lines;
+    expect(lines.join(" ")).toContain("will not contact you about this again");
+  });
+
+  it("carries a subject only when it is going out as email", () => {
+    const asEmail = hardshipCopy(ctx(), { plan: true, instalmentPaise: 160_000, email: true });
+    const asChat = hardshipCopy(ctx(), { plan: true, instalmentPaise: 160_000, email: false });
+
+    expect(asEmail.subject).toBeDefined();
+    expect(asChat.subject).toBeUndefined();
+  });
+});
+
+describe("ensureOptOut — the line an approver may not delete", () => {
+  it("leaves a compliant body untouched", () => {
+    const lines = whatsappCopy(ctx());
+    const result = ensureOptOut(lines);
+
+    expect(result.restored).toBe(false);
+    expect(result.lines).toBe(lines);
+  });
+
+  it("puts the line back when an edit dropped it, and says that it did", () => {
+    const stripped = whatsappCopy(ctx()).slice(0, -1);
+    const result = ensureOptOut(stripped);
+
+    expect(result.restored).toBe(true);
+    expect(result.lines.at(-1)).toBe(OPT_OUT_LINE);
+    expect(result.lines).toHaveLength(stripped.length + 1);
+  });
+
+  it("does not double it up when the approver moved it rather than deleting it", () => {
+    const moved = [OPT_OUT_LINE, ...whatsappCopy(ctx()).slice(0, -1)];
+    const result = ensureOptOut(moved);
+
+    expect(result.restored).toBe(false);
+    expect(result.lines.filter((line) => line === OPT_OUT_LINE)).toHaveLength(1);
+  });
+
+  it("tolerates the whitespace a textarea leaves behind", () => {
+    const padded = [...whatsappCopy(ctx()).slice(0, -1), `  ${OPT_OUT_LINE}  `];
+    expect(ensureOptOut(padded).restored).toBe(false);
+  });
+});

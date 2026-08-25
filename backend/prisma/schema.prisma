@@ -369,9 +369,17 @@ model Approval {
   /// string[] — the planner's two-line case for the ask.
   justification   Json
   chips           Json
-  /// Shaped like the frontend's DraftMessage: the exact thing that would be sent.
+  /// Shaped like the frontend's DraftMessage: the exact thing that would be
+  /// sent. Rewritten in place if the approver edits it, so what was signed off
+  /// and what left the building are one record.
   draft           Json
   candidates      Json?
+  /// What a yes and a no each do, and the steps a yes replays on the case.
+  /// Written with the ask rather than recomputed on read: the card an approver
+  /// answers is the ask as it stood when the gate refused it.
+  ifApproved      String       @default("")
+  ifRejected      String       @default("")
+  resumeSteps     Json?
   concessionPaise Int          @default(0)
   atRiskPaise     Int
 
@@ -381,6 +389,9 @@ model Approval {
   reason         String?
   decidedAt      DateTime?
   latencySeconds Int?
+  /// True when the approver rewrote the body before saying yes — a decision the
+  /// ledger has to carry, since the message sent was not the message proposed.
+  draftEdited    Boolean           @default(false)
 
   case   Case    @relation(fields: [caseId], references: [id], onDelete: Cascade)
   action Action? @relation(fields: [actionId], references: [id], onDelete: SetNull)

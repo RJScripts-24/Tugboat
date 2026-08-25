@@ -14,7 +14,12 @@ export class SimulatedEmailAdapter implements ChannelAdapter {
   readonly mode = "simulated" as const;
 
   async send(pass: GatePass, request: SendRequest): Promise<ChannelSendResult> {
-    const mail = emailCopy(request.copy);
+    // An approved draft is sent as the approver left it; only an unattended
+    // send derives its own copy.
+    const derived = emailCopy(request.copy);
+    const mail = request.approved
+      ? { subject: request.approved.subject ?? derived.subject, lines: request.approved.lines }
+      : derived;
     const opened = seededUnit(`${pass.caseId}/em/${request.attempt}/open`) < 0.62;
 
     return {

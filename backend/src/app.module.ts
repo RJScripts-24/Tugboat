@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 
 import { AgentCoreModule } from "./agent-core/agent-core.module";
+import { ApprovalsModule } from "./approvals/approvals.module";
 import { AuthModule } from "./auth/auth.module";
 import { CasesModule } from "./cases/cases.module";
 import { ChannelsModule } from "./channels/channels.module";
@@ -26,6 +27,7 @@ import { QueueModule } from "./queue/queue.module";
     PolicyModule,
     CasesModule,
     ChannelsModule,
+    ApprovalsModule,
     AgentCoreModule,
     IngestionModule,
     HealthModule,

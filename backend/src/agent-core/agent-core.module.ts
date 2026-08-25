@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 
+import { ApprovalsModule } from "../approvals/approvals.module";
 import { ChannelsModule } from "../channels/channels.module";
 import { CasesModule } from "../cases/cases.module";
 import { PolicyModule } from "../policy/policy.module";
@@ -16,7 +17,7 @@ import { PlannerService } from "./planner.service";
  * the Evaluator follows in Stage 8.
  */
 @Module({
-  imports: [CasesModule, PolicyModule, ChannelsModule],
+  imports: [CasesModule, PolicyModule, ChannelsModule, ApprovalsModule],
   providers: [
     CaseStateMachine,
     DetectorService,
