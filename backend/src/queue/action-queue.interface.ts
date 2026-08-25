@@ -1,0 +1,61 @@
+/**
+ * The scheduler seam.
+ *
+ * Recovery is mostly *waiting*: retry when the gateway recovers, nudge when the
+ * quiet window opens, re-present on day three, check back on the promised date.
+ * All of that is one thing — "run this later" — so it gets one interface with
+ * two implementations: BullMQ over Redis for a running system, and a
+ * deterministic in-memory queue for tests and for Stage 8's accelerated batch,
+ * where a run cannot spend three real days waiting for a mandate retry.
+ */
+
+export type JobKind =
+  /** Take the next step on a case: plan, gate, execute. */
+  | "case.step"
+  /** A promised payment date has arrived; check whether it was kept. */
+  | "promise.checkin";
+
+export type QueuedJob = {
+  kind: JobKind;
+  caseId: number;
+  /** Deduplicates the job itself, so the same wait is never scheduled twice. */
+  jobId: string;
+  /** Why this job exists, for the log and for the case timeline. */
+  reason: string;
+  promiseId?: string;
+  /**
+   * The attempt count this job was scheduled against.
+   *
+   * A redelivered job must not advance the case: the action key stops the same
+   * *message* going twice, but without this a replay of "step at attempt 0"
+   * would happily plan attempt 1 and spend a contact the customer never earned
+   * (B-15).
+   */
+  expectAttempt?: number;
+};
+
+export type EnqueueOptions = {
+  /** Milliseconds from now. Zero runs at the next drain / immediately. */
+  delayMs?: number;
+};
+
+export type JobHandler = (job: QueuedJob) => Promise<void>;
+
+export interface ActionQueue {
+  readonly kind: "bullmq" | "inline";
+  enqueue(job: QueuedJob, options?: EnqueueOptions): Promise<void>;
+  cancel(jobId: string): Promise<void>;
+  /**
+   * Drops every job, scheduled or waiting.
+   *
+   * Stage 8 reseeds the demo dataset from a completed batch; scheduled work
+   * left pointing at cases that no longer exist would fire against nothing and
+   * fill the log with ghosts.
+   */
+  clear(): Promise<void>;
+  /** Registered once at boot by the module that owns the work. */
+  process(handler: JobHandler): void;
+  close(): Promise<void>;
+}
+
+export const ACTION_QUEUE = Symbol("ACTION_QUEUE");

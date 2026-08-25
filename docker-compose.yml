@@ -1,0 +1,46 @@
+# Local infrastructure for the Tugboat API.
+#
+#   docker compose up -d      (from the repo root, or `npm run infra:up` in backend/)
+#
+# Credentials are deliberately trivial: this stack is localhost-only and never
+# holds anything but test-mode data.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tugboat-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tugboat
+      POSTGRES_PASSWORD: tugboat
+      POSTGRES_DB: tugboat
+    ports:
+      - "5432:5432"
+    volumes:
+      - tugboat-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tugboat -d tugboat"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: tugboat-redis
+    restart: unless-stopped
+    # BullMQ requires noeviction: an evicted job key is a recovery action that
+    # silently never runs. appendonly keeps scheduled jobs across a restart.
+    command: redis-server --appendonly yes --maxmemory-policy noeviction
+    ports:
+      - "6379:6379"
+    volumes:
+      - tugboat-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  tugboat-pgdata:
+  tugboat-redisdata:

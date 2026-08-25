@@ -1,0 +1,7 @@
+# Private working docs - not part of the submission
+docs/
+design/
+
+# Env files
+.env
+.env.local

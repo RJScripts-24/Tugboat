@@ -1,0 +1,236 @@
+import { Injectable, Logger } from "@nestjs/common";
+import type { PolicyVerdict, Prisma } from "@prisma/client";
+
+import { CaseEventsService, withSeqRetry } from "../cases/case-events.service";
+import { toCaseRef } from "../common/case-ref";
+import { PrismaService } from "../prisma/prisma.service";
+import type { GatePass, GatePassClaims } from "./gate-pass";
+import { formatClock, istMinuteOfDay } from "./ist-clock";
+import {
+  checkSummary,
+  decisionRows,
+  evaluateGate,
+  type Evaluation,
+  type FactRow,
+  type GateAction,
+  type GateSubject,
+  type PolicyCheck,
+} from "./policy-gate.evaluate";
+import { CHANNEL_LABELS, POLICY_CHANNELS, type PolicyChannel } from "./policy-pack";
+import { PolicyService } from "./policy.service";
+
+export type GateResult = Evaluation & {
+  decisionId: string;
+  policyVersion: string;
+  evaluatedInMs: number;
+  rows: FactRow[];
+  /**
+   * Minted only on an allow. `PolicyGateService` is the sole issuer of this
+   * type, and channel adapters require one, so an un-gated send does not
+   * compile.
+   */
+  pass: GatePass | null;
+};
+
+const VERDICT_TO_ENUM: Record<Evaluation["verdict"], PolicyVerdict> = {
+  allowed: "ALLOWED",
+  blocked: "BLOCKED",
+  needs_approval: "NEEDS_APPROVAL",
+};
+
+@Injectable()
+export class PolicyGateService {
+  private readonly logger = new Logger(PolicyGateService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly policy: PolicyService,
+    private readonly events: CaseEventsService,
+  ) {}
+
+  /**
+   * Checks one proposed action against the active policy pack and records the
+   * verdict — including the allows.
+   *
+   * "Bounded" is only provable if the passes are logged as carefully as the
+   * blocks (ADR-6): the evidence report's compliance figures are counted from
+   * these rows rather than taken from the agent's word, and a gate that logged
+   * only its refusals could not prove a single quiet hour was respected.
+   */
+  async check(caseId: number, action: GateAction): Promise<GateResult> {
+    const startedAt = Date.now();
+
+    const record = await this.prisma.case.findUniqueOrThrow({
+      where: { id: caseId },
+      include: {
+        customer: true,
+        // Only executed actions count against a bound: a planned-but-blocked
+        // send never reached anybody and must not spend the case's rope.
+        actions: { where: { status: "EXECUTED" }, orderBy: { executedAt: "desc" } },
+      },
+    });
+
+    const { id: policyVersionId, version, pack } = await this.policy.getActive(record.merchantId);
+
+    const channelUsage = Object.fromEntries(
+      POLICY_CHANNELS.map((channel) => [
+        channel,
+        record.actions.filter((entry) => entry.channel === channel).length,
+      ]),
+    ) as Record<PolicyChannel, number>;
+
+    const contacts = record.actions.filter(
+      (entry) => entry.channel !== null && entry.channel !== "RETRY",
+    );
+    const representations = record.actions.filter((entry) => entry.channel === "RETRY");
+
+    const subject: GateSubject = {
+      caseId: record.id,
+      type: record.type,
+      amountPaise: record.amountPaise,
+      attemptsUsed: record.attemptsUsed,
+      deadlineAt: record.deadlineAt,
+      diagnosisConfidence: record.diagnosisConfidence,
+      segment: record.customer.segment,
+      optedOutAt: record.customer.optedOutAt,
+      lastSentiment: record.lastSentiment,
+      lastSentimentScore: record.lastSentimentScore,
+      hardshipFlaggedAt: record.hardshipFlaggedAt,
+      channelUsage,
+      lastContactAt: contacts[0]?.executedAt ?? null,
+      lastRepresentationAt: representations[0]?.executedAt ?? null,
+      representationsThisCycle: representations.length,
+    };
+
+    const evaluation = evaluateGate(subject, action, pack, version);
+    const evaluatedInMs = Date.now() - startedAt;
+    const rows = decisionRows(evaluation, version, evaluatedInMs);
+
+    const decision = await this.record(
+      record.id,
+      action,
+      evaluation,
+      { policyVersionId, version },
+      rows,
+      evaluatedInMs,
+    );
+
+    this.logger.log(
+      `${toCaseRef(record.id)} gate ${evaluation.verdict} for ${action.channel} · ${
+        evaluation.outcome.kind === "allow" ? "no objection" : evaluation.outcome.reason
+      }`,
+    );
+
+    return {
+      ...evaluation,
+      decisionId: decision.id,
+      policyVersion: version,
+      evaluatedInMs,
+      rows,
+      pass:
+        evaluation.verdict === "allowed"
+          ? mintPass({
+              decisionId: decision.id,
+              caseId: record.id,
+              channel: action.channel,
+              policyVersion: version,
+              issuedAt: new Date(),
+            })
+          : null,
+    };
+  }
+
+  /**
+   * The decision row and the timeline entry land in one transaction, for the
+   * same reason a stage change and its event do (ADR-2): a verdict the case
+   * history does not mention is a hole, and a timeline entry with no decision
+   * row behind it is a claim with no record.
+   */
+  private async record(
+    caseId: number,
+    action: GateAction,
+    evaluation: Evaluation,
+    policy: { policyVersionId: string; version: string },
+    rows: FactRow[],
+    evaluatedInMs: number,
+  ) {
+    // Retried on a sequence collision like every other event writer: two
+    // workers gating the same case at once must not lose a decision row (B-16).
+    return withSeqRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          const decision = await tx.policyDecision.create({
+            data: {
+              caseId,
+              verdict: VERDICT_TO_ENUM[evaluation.verdict],
+              checks: evaluation.checks as unknown as Prisma.InputJsonValue,
+              policyVersionId: policy.policyVersionId,
+              rescheduledFor: evaluation.rescheduledFor,
+              evaluatedInMs,
+            },
+          });
+
+          await this.events.append(tx, {
+            caseId,
+            kind: "POLICY_CHECK",
+            ...timelineCopy(evaluation, action, policy.version),
+            body: {
+              type: "policy",
+              checks: evaluation.checks as unknown as Prisma.InputJsonValue,
+              rows: rows as unknown as Prisma.InputJsonValue,
+            },
+          });
+
+          return decision;
+        }),
+      {
+        onRetry: (attempt) =>
+          this.logger.warn(`Event sequence collision on the gate; retrying (attempt ${attempt})`),
+      },
+    );
+  }
+}
+
+/**
+ * The one place a `GatePass` comes into existence.
+ *
+ * The brand has no runtime representation, so this cast is the only way to
+ * produce the type; `architecture.spec.ts` asserts that no file outside this
+ * module contains another one.
+ */
+function mintPass(claims: GatePassClaims): GatePass {
+  return claims as GatePass;
+}
+
+function timelineCopy(
+  evaluation: Evaluation,
+  action: GateAction,
+  version: string,
+): { title: string; summary: string; badge?: { label: string; tone: string } } {
+  const { passed, total } = checkSummary(evaluation.checks);
+  const channel = CHANNEL_LABELS[action.channel].toLowerCase();
+
+  if (evaluation.verdict === "allowed") {
+    const clock = formatClock(istMinuteOfDay(action.at ?? new Date()));
+    return {
+      title: `Policy check — ${passed}/${total} passed`,
+      summary: `PolicyGate ${version} cleared ${channel} for ${clock} IST`,
+    };
+  }
+
+  if (evaluation.verdict === "needs_approval") {
+    return {
+      title: "Policy check — needs approval",
+      summary: `${evaluation.outcome.kind === "approve" ? evaluation.outcome.reason : "Escalation gate"} · sent to the approvals queue`,
+      badge: { label: "NEEDS APPROVAL", tone: "waiting" },
+    };
+  }
+
+  return {
+    title: "Policy check — blocked",
+    summary: evaluation.outcome.kind === "allow" ? "Blocked" : evaluation.outcome.reason,
+    badge: { label: "BLOCKED", tone: "halted" },
+  };
+}
+
+export type { PolicyCheck };

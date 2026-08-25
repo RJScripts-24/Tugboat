@@ -1,0 +1,224 @@
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  UnprocessableEntityException,
+} from "@nestjs/common";
+import { createHash } from "node:crypto";
+
+import { isUniqueViolation } from "../cases/case-events.service";
+import { PrismaService } from "../prisma/prisma.service";
+import {
+  diffPacks,
+  nextVersion,
+  renderChange,
+  summariseChanges,
+  type PolicyChange,
+} from "./policy.diff";
+import { policyPackSchema, type PolicyPack } from "./policy-pack";
+
+export type { PolicyPack } from "./policy-pack";
+
+export type ActivePolicy = { id: string; version: string; pack: PolicyPack };
+
+/** Matches the frontend's PolicyRevision — the Policies page renders these rows. */
+export type PolicyRevision = {
+  version: string;
+  hash: string;
+  prevHash: string;
+  actor: "HUMAN" | "SYSTEM";
+  by: string;
+  daysAgo: number;
+  summary: string;
+  changes: string[];
+};
+
+export type SaveResult = {
+  version: string;
+  pack: PolicyPack;
+  changes: PolicyChange[];
+  /** True when the submitted pack was identical to the active one, so no version was cut. */
+  unchanged: boolean;
+};
+
+const GENESIS_HASH = "0".repeat(10);
+
+@Injectable()
+export class PolicyService {
+  private readonly logger = new Logger(PolicyService.name);
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  async getActive(merchantId: string): Promise<ActivePolicy> {
+    const version = await this.prisma.policyVersion.findFirst({
+      where: { merchantId, isActive: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!version) {
+      throw new NotFoundException({ error: "No active policy pack for this merchant." });
+    }
+
+    return { id: version.id, version: version.version, pack: version.pack as PolicyPack };
+  }
+
+  /**
+   * Every version ever cut, newest first, hash-chained.
+   *
+   * The chain is derived on read from `(version, changes, previous hash)` using
+   * the same construction the browser uses, so the page can verify the history
+   * itself rather than being told it is intact. `PolicyVersion.hash` is left to
+   * do its own job — identifying the pack's contents.
+   */
+  async revisions(merchantId: string): Promise<PolicyRevision[]> {
+    const rows = await this.prisma.policyVersion.findMany({
+      where: { merchantId },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const now = Date.now();
+    const chained: PolicyRevision[] = [];
+    let prevHash = GENESIS_HASH;
+
+    for (const row of rows) {
+      const hash = chainHash(row.version, row.changes, prevHash);
+      chained.push({
+        version: row.version,
+        hash,
+        prevHash,
+        actor: row.createdBy ? "HUMAN" : "SYSTEM",
+        by: row.createdBy ?? "Tugboat",
+        daysAgo: Math.max(0, Math.round((now - row.createdAt.getTime()) / 86_400_000)),
+        summary: row.note ?? summariseChanges([]),
+        changes: row.changes,
+      });
+      prevHash = hash;
+    }
+
+    return chained.reverse();
+  }
+
+  /**
+   * Validates a submitted pack, diffs it against what is in force, and cuts a
+   * new version if anything moved.
+   *
+   * The write is versioned rather than in-place (ADR-12) because every policy
+   * decision points at the exact version it was checked against: editing the
+   * active row would silently rewrite the rules that governed decisions already
+   * taken, and the evidence report's "under policy v4" line would stop being
+   * true retrospectively.
+   */
+  async save(merchantId: string, input: unknown, actor: string): Promise<SaveResult> {
+    const pack = this.parsePack(input);
+    const active = await this.getActive(merchantId);
+    const changes = diffPacks(active.pack, pack);
+
+    if (changes.length === 0) {
+      return { version: active.version, pack: active.pack, changes: [], unchanged: true };
+    }
+
+    const created = await this.withVersionRetry(merchantId, async (version) =>
+      this.prisma.$transaction(async (tx) => {
+        await tx.policyVersion.updateMany({
+          where: { merchantId, isActive: true },
+          data: { isActive: false },
+        });
+
+        return tx.policyVersion.create({
+          data: {
+            merchantId,
+            version,
+            pack,
+            hash: packHash(pack),
+            note: summariseChanges(changes),
+            changes: changes.map(renderChange),
+            isActive: true,
+            createdBy: actor,
+          },
+        });
+      }),
+    );
+
+    this.logger.log(
+      `Policy ${active.version} → ${created.version} by ${actor} · ${changes
+        .map(renderChange)
+        .join(" · ")}`,
+    );
+
+    return { version: created.version, pack, changes, unchanged: false };
+  }
+
+  private parsePack(input: unknown): PolicyPack {
+    // Checked ahead of the schema purely so the refusal says why. The schema
+    // types `opt_out` as the literal `true`, which is what actually makes the
+    // rule impossible to switch off (PRD 9.4).
+    if (isOptOutDisabled(input)) {
+      throw new UnprocessableEntityException({
+        error:
+          "Opt-out cannot be disabled. A customer who sent STOP is closed on every channel, permanently — this is the one rule with no switch.",
+      });
+    }
+
+    const parsed = policyPackSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new UnprocessableEntityException({
+        error: "The submitted policy pack is not valid.",
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })),
+      });
+    }
+
+    return parsed.data;
+  }
+
+  /**
+   * Two concurrent saves both compute the same next label; the unique
+   * constraint on (merchantId, version) turns that race into a caught error
+   * rather than two rows claiming to be v5, and the loser recomputes.
+   */
+  private async withVersionRetry<T>(
+    merchantId: string,
+    run: (version: string) => Promise<T>,
+    attempts = 3,
+  ): Promise<T> {
+    for (let attempt = 1; ; attempt += 1) {
+      const active = await this.getActive(merchantId);
+      try {
+        return await run(nextVersion(active.version));
+      } catch (error) {
+        if (attempt >= attempts || !isUniqueViolation(error)) throw error;
+        this.logger.warn(`Policy version collision; retrying (attempt ${attempt + 1})`);
+      }
+    }
+  }
+}
+
+function isOptOutDisabled(input: unknown): boolean {
+  if (typeof input !== "object" || input === null) return false;
+  const rules = (input as { rules?: unknown }).rules;
+  if (typeof rules !== "object" || rules === null) return false;
+  return (rules as { opt_out?: unknown }).opt_out === false;
+}
+
+/** Identifies the pack's contents. Key order is fixed by the schema, so it is stable. */
+export function packHash(pack: PolicyPack): string {
+  return createHash("sha256").update(JSON.stringify(pack)).digest("hex").slice(0, 16);
+}
+
+/** FNV-1a widened to a hex digest — the same construction `ledger-verify.ts` recomputes. */
+export function chainHash(version: string, changes: string[], prevHash: string): string {
+  const text = `${version}|${changes.join(",")}|${prevHash}`;
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  let out = "";
+  while (out.length < 10) {
+    h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
+    out += (h >>> 0).toString(16).padStart(8, "0");
+  }
+  return out.slice(0, 10);
+}
