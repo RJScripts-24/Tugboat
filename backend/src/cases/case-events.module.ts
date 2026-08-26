@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 
+import { AuditModule } from "../audit/audit.module";
 import { CaseEventsService } from "./case-events.service";
 
 /**
@@ -9,6 +10,7 @@ import { CaseEventsService } from "./case-events.service";
  * held together by `forwardRef`.
  */
 @Module({
+  imports: [AuditModule],
   providers: [CaseEventsService],
   exports: [CaseEventsService],
 })

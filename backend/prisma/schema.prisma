@@ -427,25 +427,37 @@ model PaymentPromise {
 /// Append-only and hash-chained (ADR-9). The app role holds INSERT and SELECT
 /// only; see the grant statement in the migration notes.
 model AuditLedger {
-  id       String      @id @default(cuid())
+  id         String      @id @default(cuid())
+  merchantId String
   /// One chain per case ("C-1195"), plus "policy" for policy-pack edits.
-  chain    String
-  seq      Int
-  hash     String
-  prevHash String
+  chain      String
+  seq        Int
+  /// The digest the browser recomputes: ledgerDigest(seed | prevHash), the same
+  /// construction as frontend/src/lib/ledger-digest.ts. Ten hex characters, not
+  /// cryptographic — its job is that the reader need not trust this server.
+  hash       String
+  prevHash   String
+  /// The server's parallel chain over the same preimage, SHA-256 this time.
+  /// Strong digest, weaker property: believing it means believing this server.
+  /// The pair is the honest answer; neither alone is (D-73).
+  sha256     String      @default("")
+  prevSha256 String      @default("")
   /// Everything the digest covers except prevHash, so a browser can recompute
-  /// the chain itself instead of being told it is intact.
-  seed     String
-  actor    LedgerActor
-  action   String
-  at       DateTime    @default(now())
-  detail   String
-  caseId   Int?
+  /// the chain itself instead of being told it is intact. Derivable from the
+  /// columns beside it, and re-derived rather than trusted on verification.
+  seed       String
+  actor      LedgerActor
+  action     String
+  at         DateTime    @default(now())
+  detail     String
+  caseId     Int?
   /// Dotted paths inside payload whose value was masked before storage.
-  masked   String[]    @default([])
-  payload  Json
+  masked     String[]    @default([])
+  payload    Json
 
-  @@unique([chain, seq])
+  /// Scoped per merchant so two tenants can each own a chain called "policy".
+  @@unique([merchantId, chain, seq])
+  @@index([merchantId, at])
   @@index([chain, seq])
   @@index([caseId])
   @@index([actor])

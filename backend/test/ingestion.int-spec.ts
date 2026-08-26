@@ -11,6 +11,7 @@ import type { NormalizedEvent } from "../src/ingestion/normalized-event";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { ACTION_QUEUE } from "../src/queue/action-queue.interface";
 import { InlineActionQueue } from "../src/queue/inline-action-queue";
+import { purgeLedgerForCases } from "./ledger-maintenance";
 
 /**
  * INTEGRATION SUITE — needs a real database (`npm run test:int`).
@@ -83,6 +84,14 @@ describe("Ingestion (integration)", () => {
   });
 
   afterAll(async () => {
+    const opened = await prisma.case.findMany({
+      where: { customer: { name: { contains: RUN } } },
+      select: { id: true },
+    });
+    // Ledger rows outlive their cases by design — the table refuses an
+    // ordinary delete — so a suite that writes them cleans up through the
+    // one maintenance hatch rather than leaving fixtures in the demo log.
+    await purgeLedgerForCases(prisma, opened.map((row) => row.id));
     await prisma.case.deleteMany({ where: { customer: { name: { contains: RUN } } } });
     await prisma.customer.deleteMany({ where: { name: { contains: RUN } } });
     await prisma.webhookEvent.deleteMany({ where: { eventId: { in: createdEventIds } } });

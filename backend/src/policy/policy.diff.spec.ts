@@ -1,10 +1,21 @@
-import { diffPacks, nextVersion, renderChange, summariseChanges } from "./policy.diff";
+import {
+  diffPacks,
+  nextFreeVersion,
+  nextVersion,
+  renderChange,
+  summariseChanges,
+  versionNumber,
+} from "./policy.diff";
 import type { PolicyPack } from "./policy-pack";
 
 const RUPEE = 100;
 
 const V4: PolicyPack = {
-  contact: { maxAttempts: 4, coolDownHours: 20, channelCaps: { WHATSAPP: 2, EMAIL: 2, VOICE: 1, RETRY: 2 } },
+  contact: {
+    maxAttempts: 4,
+    coolDownHours: 20,
+    channelCaps: { WHATSAPP: 2, EMAIL: 2, VOICE: 1, RETRY: 2 },
+  },
   quiet: { startMinutes: 21 * 60, endMinutes: 9 * 60, exemptSilentRetries: true },
   rules: { opt_out: true, sentiment: true, deadline: true, attempt_cap: true },
   sentimentThreshold: 0.7,
@@ -61,7 +72,9 @@ describe("the policy diff", () => {
   });
 
   it("renders money and clocks the way the page does", () => {
-    expect(changed((pack) => (pack.escalation.valueThresholdPaise = 50_000 * RUPEE))[0]).toMatchObject({
+    expect(
+      changed((pack) => (pack.escalation.valueThresholdPaise = 50_000 * RUPEE))[0],
+    ).toMatchObject({
       from: "₹25,000",
       to: "₹50,000",
     });
@@ -126,5 +139,57 @@ describe("the policy diff", () => {
     expect(nextVersion("v4")).toBe("v5");
     expect(nextVersion("v19")).toBe("v20");
     expect(nextVersion("draft")).toBe("v2");
+  });
+});
+
+/**
+ * The allocator, after B-24.
+ *
+ * A label has to be free across the whole table, not merely one past whatever
+ * happens to be in force — a version stays in the history after it stops being
+ * active, so the two numbers can differ and the difference is exactly where the
+ * collision lived.
+ */
+describe("nextFreeVersion", () => {
+  it("follows the highest label ever cut, not the active one", () => {
+    // v4 in force with v5, v6 and v7 already in the history is precisely what a
+    // reseed leaves behind, and it used to produce "v5" three times in a row.
+    expect(nextFreeVersion(["v1", "v2", "v3", "v4", "v5", "v6", "v7"])).toBe("v8");
+  });
+
+  it("does not care what order the labels arrive in", () => {
+    expect(nextFreeVersion(["v7", "v2", "v5"])).toBe("v8");
+  });
+
+  it("starts at v1 for a merchant with no history", () => {
+    expect(nextFreeVersion([])).toBe("v1");
+  });
+
+  it("ignores labels it cannot read rather than throwing on them", () => {
+    expect(nextFreeVersion(["draft", "v3", "rollback"])).toBe("v4");
+  });
+
+  it("advances past a gap rather than filling it", () => {
+    // Reusing a freed number would give two different packs the same name, and
+    // every policy decision that pointed at the old one would start reading as
+    // though it had been judged by the new.
+    expect(nextFreeVersion(["v1", "v9"])).toBe("v10");
+  });
+
+  it("keeps advancing when called repeatedly, which is what makes the retry work", () => {
+    const taken = ["v1", "v2"];
+    const first = nextFreeVersion(taken);
+    taken.push(first);
+
+    expect(first).toBe("v3");
+    expect(nextFreeVersion(taken)).toBe("v4");
+  });
+});
+
+describe("versionNumber", () => {
+  it("reads our labels and refuses anything else", () => {
+    expect(versionNumber("v12")).toBe(12);
+    expect(versionNumber("12")).toBe(12);
+    expect(versionNumber("draft")).toBeNull();
   });
 });

@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 
 import { AgentCoreModule } from "./agent-core/agent-core.module";
 import { ApprovalsModule } from "./approvals/approvals.module";
+import { AuditModule } from "./audit/audit.module";
 import { AuthModule } from "./auth/auth.module";
 import { CasesModule } from "./cases/cases.module";
 import { ChannelsModule } from "./channels/channels.module";
@@ -14,8 +15,8 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { QueueModule } from "./queue/queue.module";
 
 /**
- * The remaining module seams land here as they are built: simulator, audit,
- * metrics, realtime.
+ * The remaining module seams land here as they are built: simulator, metrics,
+ * realtime.
  */
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { QueueModule } from "./queue/queue.module";
     CasesModule,
     ChannelsModule,
     ApprovalsModule,
+    AuditModule,
     AgentCoreModule,
     IngestionModule,
     HealthModule,

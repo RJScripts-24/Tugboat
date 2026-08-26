@@ -47,7 +47,11 @@ const RUPEE = 100;
 
 /** Policy v4, matching the seed — the pack the e2e contract is served from. */
 export const FAKE_POLICY_V4 = {
-  contact: { maxAttempts: 4, coolDownHours: 20, channelCaps: { WHATSAPP: 2, EMAIL: 2, VOICE: 1, RETRY: 2 } },
+  contact: {
+    maxAttempts: 4,
+    coolDownHours: 20,
+    channelCaps: { WHATSAPP: 2, EMAIL: 2, VOICE: 1, RETRY: 2 },
+  },
   quiet: { startMinutes: 21 * 60, endMinutes: 9 * 60, exemptSilentRetries: true },
   rules: { opt_out: true, sentiment: true, deadline: true, attempt_cap: true },
   sentimentThreshold: 0.7,
@@ -60,6 +64,16 @@ export const FAKE_POLICY_V4 = {
   },
   mandate: { maxPerCycle: 3, spacingDays: 3, alignToPayday: true },
   channels: { WHATSAPP: true, EMAIL: true, VOICE: true, RETRY: true },
+};
+
+type FakeLedgerRow = {
+  id: string;
+  merchantId: string;
+  chain: string;
+  seq: number;
+  hash: string;
+  sha256: string;
+  [key: string]: unknown;
 };
 
 type FakePolicyVersion = {
@@ -88,6 +102,17 @@ export async function createFakePrisma(options: { databaseUp?: boolean } = {}) {
 
   const webhookEvents = new Map<string, FakeWebhookEvent>();
 
+  /**
+   * The ledger, crudely.
+   *
+   * `PolicyService.save` writes a row on the "policy" chain inside the same
+   * transaction that cuts a version, so the HTTP contract cannot run without
+   * somewhere for it to land. Sequencing and the digests are the real writer's
+   * job and are proven against a real database in `audit.int-spec.ts`; this
+   * only has to accept an append and hand back the previous tip.
+   */
+  const ledger: FakeLedgerRow[] = [];
+
   const policyVersions: FakePolicyVersion[] = [
     {
       id: "policy_v4",
@@ -113,7 +138,12 @@ export async function createFakePrisma(options: { databaseUp?: boolean } = {}) {
       findFirst: async () => merchants[0] ?? null,
     },
     webhookEvent: {
-      create: async ({ data }: { data: Omit<FakeWebhookEvent, "receivedAt" | "processedAt" | "caseId"> & Partial<FakeWebhookEvent> }) => {
+      create: async ({
+        data,
+      }: {
+        data: Omit<FakeWebhookEvent, "receivedAt" | "processedAt" | "caseId"> &
+          Partial<FakeWebhookEvent>;
+      }) => {
         if (webhookEvents.has(data.eventId)) throw uniqueViolation("eventId");
 
         const row: FakeWebhookEvent = {
@@ -130,7 +160,13 @@ export async function createFakePrisma(options: { databaseUp?: boolean } = {}) {
       },
       findUnique: async ({ where }: { where: { eventId: string } }) =>
         webhookEvents.get(where.eventId) ?? null,
-      update: async ({ where, data }: { where: { eventId: string }; data: Partial<FakeWebhookEvent> }) => {
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { eventId: string };
+        data: Partial<FakeWebhookEvent>;
+      }) => {
         const row = webhookEvents.get(where.eventId);
         if (!row) throw new Error(`No webhookEvent ${where.eventId}`);
         Object.assign(row, data);
@@ -198,6 +234,49 @@ export async function createFakePrisma(options: { databaseUp?: boolean } = {}) {
         );
         for (const row of matched) Object.assign(row, data);
         return { count: matched.length };
+      },
+    },
+    auditLedger: {
+      findFirst: async ({ where }: { where: { merchantId: string; chain: string } }) =>
+        ledger
+          .filter((row) => row.merchantId === where.merchantId && row.chain === where.chain)
+          .sort((a, b) => b.seq - a.seq)[0] ?? null,
+      findMany: async ({
+        where,
+        distinct,
+      }: {
+        where?: { merchantId?: string; chain?: string };
+        distinct?: string[];
+      } = {}) => {
+        const rows = ledger
+          .filter(
+            (row) =>
+              (where?.merchantId === undefined || row.merchantId === where.merchantId) &&
+              (where?.chain === undefined || row.chain === where.chain),
+          )
+          .sort((a, b) => a.seq - b.seq);
+
+        if (!distinct?.includes("chain")) return rows;
+
+        const seen = new Set<string>();
+        return rows.filter((row) => (seen.has(row.chain) ? false : seen.add(row.chain) && true));
+      },
+      create: async ({ data }: { data: FakeLedgerRow }) => {
+        const row = { ...data, id: `ledger_${ledger.length + 1}` };
+        ledger.push(row);
+        return row;
+      },
+      count: async () => ledger.length,
+      // `distinct` and `groupBy` exist only because the summary endpoint asks
+      // for them. Crude on purpose: the real aggregation is Postgres's job.
+      groupBy: async ({ where }: { where?: { merchantId?: string } } = {}) => {
+        const counts = new Map<string, number>();
+        for (const row of ledger) {
+          if (where?.merchantId !== undefined && row.merchantId !== where.merchantId) continue;
+          const actor = String(row.actor);
+          counts.set(actor, (counts.get(actor) ?? 0) + 1);
+        }
+        return [...counts.entries()].map(([actor, count]) => ({ actor, _count: { _all: count } }));
       },
     },
     // The gate's own write path is proven against the real database

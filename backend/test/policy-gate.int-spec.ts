@@ -13,6 +13,7 @@ import { PolicyService } from "../src/policy/policy.service";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { ACTION_QUEUE } from "../src/queue/action-queue.interface";
 import { InlineActionQueue } from "../src/queue/inline-action-queue";
+import { purgeLedgerForCases } from "./ledger-maintenance";
 
 /**
  * INTEGRATION SUITE — needs a real database (`npm run test:int`).
@@ -98,6 +99,10 @@ describe("PolicyGate (integration)", () => {
     const ids = cases.map((row) => row.id);
 
     await prisma.policyDecision.deleteMany({ where: { caseId: { in: ids } } });
+    // Ledger rows outlive their cases by design — the table refuses an
+    // ordinary delete — so a suite that writes them cleans up through the
+    // one maintenance hatch rather than leaving fixtures in the demo log.
+    await purgeLedgerForCases(prisma, ids);
     await prisma.case.deleteMany({ where: { id: { in: ids } } });
     await prisma.customer.deleteMany({ where: { name: { contains: RUN } } });
     await prisma.policyVersion.deleteMany({ where: { merchantId, createdBy: `Gate Test ${RUN}` } });

@@ -6,11 +6,12 @@ import {
 } from "@nestjs/common";
 import { createHash } from "node:crypto";
 
+import { AuditWriterService } from "../audit/audit-writer.service";
 import { isUniqueViolation } from "../cases/case-events.service";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   diffPacks,
-  nextVersion,
+  nextFreeVersion,
   renderChange,
   summariseChanges,
   type PolicyChange,
@@ -43,11 +44,17 @@ export type SaveResult = {
 
 const GENESIS_HASH = "0".repeat(10);
 
+/** The ledger chain policy edits are written to. One per merchant. */
+const POLICY_CHAIN = "policy";
+
 @Injectable()
 export class PolicyService {
   private readonly logger = new Logger(PolicyService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditWriterService,
+  ) {}
 
   async getActive(merchantId: string): Promise<ActivePolicy> {
     const version = await this.prisma.policyVersion.findFirst({
@@ -124,7 +131,7 @@ export class PolicyService {
           data: { isActive: false },
         });
 
-        return tx.policyVersion.create({
+        const row = await tx.policyVersion.create({
           data: {
             merchantId,
             version,
@@ -136,6 +143,30 @@ export class PolicyService {
             createdBy: actor,
           },
         });
+
+        // The rules get their own chain, in the same write that cuts the
+        // version. "Who changed the rules" belongs beside "what the rules
+        // stopped", and a policy edit that the ledger did not witness would
+        // leave every decision taken afterwards pointing at a version whose
+        // arrival is unexplained.
+        await this.audit.append(tx, {
+          merchantId,
+          chain: POLICY_CHAIN,
+          actor: "HUMAN",
+          action: "POLICY_CHANGED",
+          detail: `${active.version} → ${version} · ${summariseChanges(changes)}`,
+          at: row.createdAt,
+          payload: {
+            version,
+            previous_version: active.version,
+            changed_by: actor,
+            changes: changes.map(renderChange),
+            fields: changes.length,
+            pack_hash: row.hash,
+          },
+        });
+
+        return row;
       }),
     );
 
@@ -177,6 +208,11 @@ export class PolicyService {
    * Two concurrent saves both compute the same next label; the unique
    * constraint on (merchantId, version) turns that race into a caught error
    * rather than two rows claiming to be v5, and the loser recomputes.
+   *
+   * The label comes from the highest version *ever cut*, not from the one in
+   * force. They are normally the same number, and assuming so made the retry a
+   * no-op: on a merchant whose active pack was not its newest, every attempt
+   * recomputed the identical taken label and the third one threw (B-24).
    */
   private async withVersionRetry<T>(
     merchantId: string,
@@ -184,9 +220,13 @@ export class PolicyService {
     attempts = 3,
   ): Promise<T> {
     for (let attempt = 1; ; attempt += 1) {
-      const active = await this.getActive(merchantId);
+      const taken = await this.prisma.policyVersion.findMany({
+        where: { merchantId },
+        select: { version: true },
+      });
+
       try {
-        return await run(nextVersion(active.version));
+        return await run(nextFreeVersion(taken.map((row) => row.version)));
       } catch (error) {
         if (attempt >= attempts || !isUniqueViolation(error)) throw error;
         this.logger.warn(`Policy version collision; retrying (attempt ${attempt + 1})`);

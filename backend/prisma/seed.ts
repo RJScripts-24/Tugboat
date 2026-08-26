@@ -5,6 +5,9 @@ import { createHash } from "node:crypto";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, type CaseStage, type CaseType, type RootCause } from "@prisma/client";
 
+import { AuditWriterService } from "../src/audit/audit-writer.service";
+import { AUDIT_MAP, payloadFor } from "../src/audit/ledger-payload";
+import { toCaseRef } from "../src/common/case-ref";
 import { hashPassword } from "../src/common/password";
 
 /**
@@ -14,11 +17,19 @@ import { hashPassword } from "../src/common/password";
  * Re-runnable: the case set is cleared and rebuilt on every run, so `db:seed`
  * twice leaves the same database as `db:seed` once. Stage 8 replaces this set
  * with the simulator's seeded batch.
+ *
+ * Every seeded event is written to the audit ledger through the same
+ * `AuditWriterService` the running application uses — not a copy of its
+ * arithmetic. A seeded case whose chain was computed by a second implementation
+ * would be a case the Audit Explorer could not verify, which is the one thing
+ * the Audit Explorer is for.
  */
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DIRECT_URL ?? process.env.DATABASE_URL }),
 });
+
+const audit = new AuditWriterService();
 
 const RUPEE = 100;
 
@@ -424,6 +435,15 @@ async function main(): Promise<void> {
 
   // Rebuild the case set so re-running the seed does not duplicate it. Events,
   // actions and approvals cascade from the case rows.
+  // The ledger refuses an ordinary DELETE (ADR-9), so clearing the demo set
+  // needs the maintenance flag the migration's trigger honours. This is the
+  // only place outside test tooling that sets it, and it is a seed script
+  // rebuilding its own fixtures rather than the application editing history.
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL "tugboat.ledger_maintenance" = 'on'`);
+    await tx.auditLedger.deleteMany({ where: { merchantId: merchant.id } });
+  });
+
   await prisma.case.deleteMany({ where: { merchantId: merchant.id } });
   await prisma.customer.deleteMany({ where: { merchantId: merchant.id } });
   await prisma.$executeRawUnsafe("ALTER SEQUENCE cases_id_seq RESTART WITH 1001");
@@ -466,36 +486,30 @@ async function main(): Promise<void> {
       },
     });
 
-    await prisma.caseEvent.create({
-      data: {
-        caseId: record.id,
-        seq: 1,
-        kind: "DETECTED",
-        occurredAt: openedAt,
-        title: "Revenue at risk detected",
-        summary: `${spec.type} · ₹${spec.amountRupees.toLocaleString("en-IN")} at risk`,
-        body: { type: "facts", rows: [{ label: "Amount", value: `₹${spec.amountRupees}` }] },
-      },
+    await appendSeededEvent(record, customer, {
+      seq: 1,
+      kind: "DETECTED",
+      occurredAt: openedAt,
+      title: "Revenue at risk detected",
+      summary: `${spec.type} · ₹${spec.amountRupees.toLocaleString("en-IN")} at risk`,
+      body: { type: "facts", rows: [{ label: "Amount", value: `₹${spec.amountRupees}` }] },
     });
 
     if (spec.rootCause && spec.method) {
-      await prisma.caseEvent.create({
-        data: {
-          caseId: record.id,
-          seq: 2,
-          kind: "DIAGNOSED",
-          occurredAt: new Date(openedAt.getTime() + 90_000),
-          title: `Diagnosed — ${spec.rootCause}`,
-          summary: `confidence ${spec.confidence?.toFixed(2)} · ${
-            spec.method === "RULES" ? "rules table" : "LLM"
-          }`,
-          badgeLabel: spec.method === "RULES" ? "method: rules-table" : "method: LLM",
-          badgeTone: spec.method === "RULES" ? "neutral" : "diagnosis",
-          body: {
-            type: "diagnosis",
-            reasoning: [],
-            rows: [{ label: "Root cause", value: spec.rootCause, mono: true }],
-          },
+      await appendSeededEvent(record, customer, {
+        seq: 2,
+        kind: "DIAGNOSED",
+        occurredAt: new Date(openedAt.getTime() + 90_000),
+        title: `Diagnosed — ${spec.rootCause}`,
+        summary: `confidence ${spec.confidence?.toFixed(2)} · ${
+          spec.method === "RULES" ? "rules table" : "LLM"
+        }`,
+        badgeLabel: spec.method === "RULES" ? "method: rules-table" : "method: LLM",
+        badgeTone: spec.method === "RULES" ? "neutral" : "diagnosis",
+        body: {
+          type: "diagnosis",
+          reasoning: [],
+          rows: [{ label: "Root cause", value: spec.rootCause, mono: true }],
         },
       });
     }
@@ -507,11 +521,64 @@ async function main(): Promise<void> {
     cases: await prisma.case.count(),
     caseEvents: await prisma.caseEvent.count(),
     policyVersions: await prisma.policyVersion.count(),
+    ledgerRows: await prisma.auditLedger.count(),
   };
 
   console.log(`Seeded merchant ${merchant.email} · policy ${policy.version}`);
   console.log(JSON.stringify(counts, null, 2));
   console.log(`Sign in with ${DEMO_MERCHANT.email} / ${DEMO_MERCHANT.password}`);
+}
+
+/**
+ * One seeded event, and the ledger row that evidences it.
+ *
+ * Mirrors what `CaseEventsService.append` does at runtime: the two writes go in
+ * one transaction, and the ledger row is built by the real writer rather than
+ * by a second copy of the digest that could drift from it.
+ */
+async function appendSeededEvent(
+  record: { id: number; merchantId: string },
+  customer: Parameters<typeof payloadFor>[2],
+  event: {
+    seq: number;
+    kind: Parameters<typeof payloadFor>[0]["kind"];
+    occurredAt: Date;
+    title: string;
+    summary: string;
+    badgeLabel?: string;
+    badgeTone?: string;
+    body: unknown;
+  },
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const row = await tx.caseEvent.create({
+      data: {
+        caseId: record.id,
+        seq: event.seq,
+        kind: event.kind,
+        occurredAt: event.occurredAt,
+        title: event.title,
+        summary: event.summary,
+        badgeLabel: event.badgeLabel,
+        badgeTone: event.badgeTone,
+        body: event.body as never,
+      },
+    });
+
+    const full = await tx.case.findUniqueOrThrow({ where: { id: record.id } });
+    const { actor, action } = AUDIT_MAP[event.kind];
+
+    await audit.append(tx, {
+      merchantId: record.merchantId,
+      chain: toCaseRef(record.id),
+      caseId: record.id,
+      actor,
+      action,
+      detail: event.summary,
+      at: event.occurredAt,
+      payload: payloadFor(row, full, customer),
+    });
+  });
 }
 
 main()

@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 
+import { AuditModule } from "../audit/audit.module";
 import { CaseEventsModule } from "../cases/case-events.module";
 import { PolicyController } from "./policy.controller";
 import { PolicyGateService } from "./policy-gate.service";
@@ -10,7 +11,7 @@ import { PolicyService } from "./policy.service";
  * reads it cannot drift into separate modules with separate ideas of the rules.
  */
 @Module({
-  imports: [CaseEventsModule],
+  imports: [CaseEventsModule, AuditModule],
   controllers: [PolicyController],
   providers: [PolicyService, PolicyGateService],
   exports: [PolicyService, PolicyGateService],

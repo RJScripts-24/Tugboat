@@ -1,6 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma, type EventKind } from "@prisma/client";
 
+import { AuditWriterService } from "../audit/audit-writer.service";
+import { AUDIT_MAP, payloadFor } from "../audit/ledger-payload";
+import { toCaseRef } from "../common/case-ref";
+
 export type AppendEventInput = {
   caseId: number;
   kind: EventKind;
@@ -45,13 +49,21 @@ export async function withSeqRetry<T>(
 
 @Injectable()
 export class CaseEventsService {
+  constructor(private readonly audit: AuditWriterService) {}
+
   /**
-   * Appends the next event in a case's history.
+   * Appends the next event in a case's history — and its ledger row.
    *
    * Takes a transaction client rather than opening its own, because an event
    * and the state change it describes must land together or not at all (ADR-2).
    * Callers wrap both in one transaction; a caller that forgets cannot compile,
    * since there is no overload that accepts the bare client.
+   *
+   * The audit row goes in the same write for the same reason, one step further
+   * (ADR-9, D-75): the ledger is not a listener that might miss something, it
+   * is part of what writing history *is*. There is no code path that can add to
+   * a case's story without adding to its evidence, and no window in which a
+   * crash leaves one without the other.
    */
   async append(tx: Prisma.TransactionClient, input: AppendEventInput) {
     const { _max } = await tx.caseEvent.aggregate({
@@ -59,7 +71,9 @@ export class CaseEventsService {
       _max: { seq: true },
     });
 
-    return tx.caseEvent.create({
+    const occurredAt = input.occurredAt ?? new Date();
+
+    const event = await tx.caseEvent.create({
       data: {
         caseId: input.caseId,
         seq: (_max.seq ?? 0) + 1,
@@ -69,8 +83,36 @@ export class CaseEventsService {
         badgeLabel: input.badge?.label,
         badgeTone: input.badge?.tone,
         body: input.body,
-        occurredAt: input.occurredAt ?? new Date(),
+        occurredAt,
       },
     });
+
+    const record = await tx.case.findUnique({
+      where: { id: input.caseId },
+      include: { customer: true },
+    });
+
+    // A case is always present here — the event is being written against it in
+    // the same transaction. The guard exists so a future caller that appends
+    // before the case row exists fails loudly rather than writing a ledger row
+    // that references nothing.
+    if (!record) {
+      throw new Error(`Cannot audit an event for case ${input.caseId}: the case does not exist`);
+    }
+
+    const { actor, action } = AUDIT_MAP[input.kind];
+
+    await this.audit.append(tx, {
+      merchantId: record.merchantId,
+      chain: toCaseRef(record.id),
+      caseId: record.id,
+      actor,
+      action,
+      detail: input.summary,
+      at: occurredAt,
+      payload: payloadFor(event, record, record.customer),
+    });
+
+    return event;
   }
 }
