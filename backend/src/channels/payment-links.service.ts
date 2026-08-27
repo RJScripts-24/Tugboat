@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 
 import { toCaseRef } from "../common/case-ref";
 import { AppConfigService } from "../config/app-config.service";
@@ -48,7 +48,11 @@ export class PaymentLinkService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
-    @Optional() private readonly client: RazorpayClient | null = null,
+    // The token is named explicitly. `RazorpayClient | null` compiles to
+    // `Object` in the decorator metadata, Nest finds no provider called Object,
+    // and @Optional turns that miss into a silent null — which meant a lane
+    // configured `real` issued the simulated link under a real label (B-62).
+    @Optional() @Inject(RazorpayClient) private readonly client: RazorpayClient | null = null,
   ) {}
 
   get mode(): "simulated" | "real" {

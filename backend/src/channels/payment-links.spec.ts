@@ -1,8 +1,10 @@
-import type { AppConfigService } from "../config/app-config.service";
-import type { PrismaService } from "../prisma/prisma.service";
+import { Test } from "@nestjs/testing";
+
+import { AppConfigService } from "../config/app-config.service";
+import { PrismaService } from "../prisma/prisma.service";
 import { payLink } from "./channel-refs";
 import { PaymentLinkService } from "./payment-links.service";
-import type { RazorpayClient } from "./razorpay.client";
+import { RazorpayClient } from "./razorpay.client";
 
 /**
  * One link per case, and none at all unless the lane is real.
@@ -77,5 +79,43 @@ describe("the payment link service", () => {
   it("falls back to simulated when the lane is real but no client was built", () => {
     const { service } = harness("simulated");
     expect(service.mode).toBe("simulated");
+  });
+});
+
+describe("the payment link service inside Nest's injector (B-62)", () => {
+  it("receives the RazorpayClient the module provides, so a real lane really is real", async () => {
+    const client = { createPaymentLink: jest.fn() };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PaymentLinkService,
+        { provide: RazorpayClient, useValue: client },
+        { provide: PrismaService, useValue: {} },
+        {
+          provide: AppConfigService,
+          useValue: { channelModes: { razorpay: "real", email: "simulated", whatsapp: "simulated", voice: "simulated" } },
+        },
+      ],
+    }).compile();
+
+    // A union-typed constructor parameter compiles to `Object` in the decorator
+    // metadata; without an explicit @Inject token the injector hands the
+    // @Optional parameter null and the lane silently falls back to simulated.
+    expect(moduleRef.get(PaymentLinkService).mode).toBe("real");
+  });
+
+  it("stays simulated when the module provides no client", async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PaymentLinkService,
+        { provide: RazorpayClient, useValue: null },
+        { provide: PrismaService, useValue: {} },
+        {
+          provide: AppConfigService,
+          useValue: { channelModes: { razorpay: "real", email: "simulated", whatsapp: "simulated", voice: "simulated" } },
+        },
+      ],
+    }).compile();
+
+    expect(moduleRef.get(PaymentLinkService).mode).toBe("simulated");
   });
 });
