@@ -41,14 +41,23 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException({ error: "Not signed in." });
     }
 
+    let claims: SessionClaims;
     try {
-      request.merchant = await this.jwt.verifyAsync<SessionClaims>(token, {
+      claims = await this.jwt.verifyAsync<SessionClaims>(token, {
         secret: this.config.jwtSecret,
       });
     } catch {
       throw new UnauthorizedException({ error: "Session expired or invalid." });
     }
 
+    // A socket token lives in browser JavaScript for two minutes. It opens a
+    // realtime connection and nothing else; a REST call with one is a token
+    // being used where it was never meant to go (D-137).
+    if (claims.scope === "socket") {
+      throw new UnauthorizedException({ error: "A socket token cannot be used for API calls." });
+    }
+
+    request.merchant = claims;
     return true;
   }
 }

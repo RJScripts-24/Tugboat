@@ -22,6 +22,20 @@ export class AuthController {
     return this.auth.login(dto);
   }
 
+  /**
+   * Trades a verified session for a short-lived socket token (D-137).
+   *
+   * The Control Tower's BFF calls this with the cookie's JWT and hands the
+   * result to the browser, which presents it in the Socket.IO handshake. It is
+   * how the realtime layer authenticates when the API and the Control Tower
+   * are on different sites and the httpOnly cookie cannot cross.
+   */
+  @Post("socket-token")
+  @HttpCode(200)
+  socketToken(@CurrentMerchant() merchant: SessionClaims) {
+    return this.auth.socketToken(merchant);
+  }
+
   /** Lets the BFF confirm a session is still valid without decoding the JWT itself. */
   @Get("me")
   me(@CurrentMerchant() merchant: SessionClaims) {

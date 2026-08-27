@@ -8,6 +8,7 @@ import { AppConfigService } from "../config/app-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   SESSION_MAX_AGE_SECONDS,
+  SOCKET_TOKEN_MAX_AGE_SECONDS,
   type SessionClaims,
   type SignInMode,
 } from "./auth.constants";
@@ -73,6 +74,29 @@ export class AuthService {
       expiresInSeconds: SESSION_MAX_AGE_SECONDS,
       merchant: { id: merchant.id, email: merchant.email, displayName: merchant.displayName },
     };
+  }
+
+  /**
+   * A two-minute token carrying the same identity, scoped to the socket.
+   *
+   * Minted for a session the guard has already verified, so nothing here
+   * re-checks credentials; what it adds is a bound and a scope.
+   */
+  async socketToken(session: SessionClaims): Promise<{ token: string; expiresInSeconds: number }> {
+    const claims: SessionClaims = {
+      sub: session.sub,
+      email: session.email,
+      name: session.name,
+      mode: session.mode,
+      scope: "socket",
+    };
+
+    const token = await this.jwt.signAsync(claims, {
+      secret: this.config.jwtSecret,
+      expiresIn: SOCKET_TOKEN_MAX_AGE_SECONDS,
+    });
+
+    return { token, expiresInSeconds: SOCKET_TOKEN_MAX_AGE_SECONDS };
   }
 
   private async resolveByCredentials(dto: LoginDto) {

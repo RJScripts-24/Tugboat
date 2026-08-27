@@ -46,6 +46,20 @@ function connection(): Socket {
 
   socket = io(SOCKET_URL, {
     withCredentials: true,
+    // Same site, the cookie authenticates the handshake (D-112). Split across
+    // sites — Vercel in front, Render behind — the browser will not send it, so
+    // the handshake also carries a two-minute socket token fetched from this
+    // origin's own BFF route just before connecting (D-137). Called again on
+    // every reconnect, which is what keeps a laptop that slept through a demo
+    // from waking up with an expired token.
+    auth: (callback) => {
+      fetch("/api/auth/socket-token", { cache: "no-store", credentials: "same-origin" })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((payload: { token?: string } | null) =>
+          callback(payload?.token ? { token: payload.token } : {}),
+        )
+        .catch(() => callback({}));
+    },
     // Polling first, then upgrade. The handshake has to carry a cookie and the
     // upgrade path is the reliable way to get one through every proxy in
     // between; a websocket-only client that cannot upgrade simply never

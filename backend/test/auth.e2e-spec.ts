@@ -118,6 +118,32 @@ describe("Auth (e2e)", () => {
       expect(response.body).toMatchObject({ email: DEMO.email, mode: "demo" });
     });
 
+    it("trades a session for a short-lived socket token that REST routes refuse", async () => {
+      const minted = await request(app.getHttpServer())
+        .post("/auth/socket-token")
+        .set("Authorization", `Bearer ${await token()}`)
+        .expect(200);
+
+      expect(typeof minted.body.token).toBe("string");
+      expect(minted.body.expiresInSeconds).toBe(120);
+
+      const claims = JSON.parse(
+        Buffer.from(minted.body.token.split(".")[1], "base64url").toString("utf8"),
+      );
+      expect(claims.scope).toBe("socket");
+      expect(claims.exp - claims.iat).toBe(120);
+
+      // The socket token opens a socket, and nothing else.
+      await request(app.getHttpServer())
+        .get("/auth/me")
+        .set("Authorization", `Bearer ${minted.body.token}`)
+        .expect(401);
+      await request(app.getHttpServer())
+        .post("/auth/socket-token")
+        .set("Authorization", `Bearer ${minted.body.token}`)
+        .expect(401);
+    });
+
     it("accepts the token from the session cookie the BFF sets", async () => {
       const response = await request(app.getHttpServer())
         .get("/auth/me")

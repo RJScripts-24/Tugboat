@@ -45,6 +45,31 @@ cd frontend && npm run lint && npm run build
 npm run check:decisions                        # every decision's code reference still resolves
 ```
 
+## Deploy it (Render + Vercel)
+
+**API on Render** — `render.yaml` at the repo root is a Blueprint: Dashboard →
+Blueprints → New Blueprint Instance → this repo. It creates one web service
+(`backend/`, Node 20, health check on `/healthz`) and asks once for the secrets:
+`DATABASE_URL` / `DIRECT_URL` (Neon), `REDIS_URL` (Upstash TCP URL),
+`FRONTEND_ORIGIN` (your Vercel URL, exactly), `PUBLIC_API_URL` (this service's
+URL). Every lane starts simulated; flip `CHANNEL_MODE_*` and add a key in the
+dashboard when a lane goes real. Migrations run on every start.
+
+**Control Tower on Vercel** — import the repo with **Root Directory `frontend`**
+and two environment variables: `API_URL` and `NEXT_PUBLIC_API_URL`, both the
+Render URL. Nothing else: the login route sets the session cookie first-party
+on the Vercel domain, and the realtime socket authenticates across the two
+sites with a two-minute token minted by `/api/auth/socket-token` (D-137).
+
+**Then point Razorpay at it** — webhook URL `https://<render-url>/webhooks/razorpay`
+with the same secret as `RAZORPAY_WEBHOOK_SECRET`. No tunnel is needed once
+the API has a public address.
+
+Render's free plan sleeps after fifteen idle minutes; a webhook that arrives
+while it sleeps is retried by Razorpay, and the reconciler restores any step the
+sleep delayed — but for a judging window an always-on instance is the safer
+choice.
+
 ## Read it
 
 `backend/.env.example` documents every variable and mode; `frontend/README.md`
