@@ -1,10 +1,11 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import type { Action, ApprovalGate, Case, Customer, Prisma } from "@prisma/client";
 
 import { APPROVAL_CLOSES, ApprovalsService } from "../approvals/approvals.service";
 import type { DraftMessage } from "../approvals/ask-builder";
 import {
   CHANNEL_ADAPTERS,
+  SIMULATED_CHANNEL_ADAPTERS,
   channelModeLabel,
   type ChannelAdapter,
   type ChannelSendResult,
@@ -22,6 +23,7 @@ import type { PolicyChannel } from "../policy/policy-pack";
 import { PolicyService } from "../policy/policy.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ACTION_QUEUE, type ActionQueue } from "../queue/action-queue.interface";
+import { adapterFor } from "./adapter-selection";
 import { NoPlanAvailableError, PlannerService, type PlanProposal } from "./planner.service";
 import { unreachableChannels } from "./reachability";
 
@@ -101,7 +103,18 @@ export class ExecutorService {
     private readonly clock: ClockService,
     @Inject(CHANNEL_ADAPTERS) private readonly adapters: Map<string, ChannelAdapter>,
     @Inject(ACTION_QUEUE) private readonly queue: ActionQueue,
+    @Optional()
+    @Inject(SIMULATED_CHANNEL_ADAPTERS)
+    private readonly simulatedAdapters: Map<string, ChannelAdapter> | null = null,
   ) {}
+
+  private adapterFor(record: Case, channel: string): ChannelAdapter | undefined {
+    return adapterFor(
+      { configured: this.adapters, simulated: this.simulatedAdapters },
+      record.simRunId,
+      channel,
+    );
+  }
 
   /** Queues the next step on a case. The only way work is started. */
   async schedule(caseId: number, delayMs: number, reason: string): Promise<void> {
@@ -263,7 +276,7 @@ export class ExecutorService {
     pass: GatePassOf,
     options: StepOptions,
   ): Promise<StepOutcome> {
-    const adapter = this.adapters.get(plan.channel);
+    const adapter = this.adapterFor(record, plan.channel);
     if (!adapter) throw new Error(`No adapter registered for channel ${plan.channel}`);
 
     const claim = await this.claim(record.id, plan);
@@ -661,7 +674,7 @@ export class ExecutorService {
       headline: string;
     },
   ): Promise<StepOutcome> {
-    const adapter = this.adapters.get(draft.channel);
+    const adapter = this.adapterFor(record, draft.channel);
     if (!adapter) throw new Error(`No adapter registered for channel ${draft.channel}`);
 
     // Compare-and-set on the row the gate already stopped: the action leaves

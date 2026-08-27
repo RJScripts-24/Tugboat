@@ -115,6 +115,16 @@ export interface ChannelAdapter {
 export const CHANNEL_ADAPTERS = Symbol("CHANNEL_ADAPTERS");
 
 /**
+ * The simulated adapter for every channel, whatever the lanes are set to.
+ *
+ * A batch case has a simulated customer: a real email to one bounces, a real
+ * WhatsApp to one is refused, and whether its retry captures is the persona's
+ * answer, not Razorpay's. The Executor resolves a batch case's channel from
+ * this map, so a deployment with real lanes still runs an honest batch (D-140).
+ */
+export const SIMULATED_CHANNEL_ADAPTERS = Symbol("SIMULATED_CHANNEL_ADAPTERS");
+
+/**
  * The HTTP function the real adapters call, as an injectable.
  *
  * Node's global `fetch` is the production value; a unit test hands the

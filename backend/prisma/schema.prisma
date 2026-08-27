@@ -539,6 +539,7 @@ model SimRun {
   policyVersion PolicyVersion?   @relation(fields: [policyVersionId], references: [id], onDelete: SetNull)
   cases         Case[]
   groundTruth   SimGroundTruth[]
+  incidents     DegradationIncident[]
 
   @@unique([merchantId, ref])
   @@index([merchantId, createdAt])
@@ -625,10 +626,16 @@ model DegradationIncident {
   zScore       Float
   casesOpened  Int       @default(0)
   note         String?
+  /// The traffic that tripped it: null for the merchant's live gateway, or the
+  /// batch whose seeded traffic dipped. A batch's outage and the live monitor
+  /// cannot open or close each other's incidents (D-142).
+  simRunId     String?
 
-  cases Case[]
+  cases  Case[]
+  simRun SimRun? @relation(fields: [simRunId], references: [id], onDelete: Cascade)
 
   @@index([merchantId, detectedAt])
+  @@index([simRunId])
   @@map("degradation_incidents")
 }
 

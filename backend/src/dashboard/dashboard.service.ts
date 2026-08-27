@@ -246,25 +246,27 @@ export class DashboardService {
       OR: [{ simRunId: null }, ...(promoted ? [{ simRunId: promoted.id }] : [])],
     };
 
+    // The 24 hours shown end at the latest sample on the narrated clock: the
+    // promoted batch's while one is promoted — its traffic is the business the
+    // Control Tower narrates, and a handful of live webhooks on a later real
+    // date would otherwise drag the window off it — else the live gateway's.
     const latest = await this.prisma.paymentSample.findFirst({
-      where: narratedSamples,
+      where: { merchantId, simRunId: promoted ? promoted.id : null },
       orderBy: { at: "desc" },
       select: { at: true },
     });
 
-    const dayStart = istDayStart(latest?.at ?? this.clock.now());
+    const windowEnd = bucketCeil(latest?.at ?? this.clock.now());
+    const windowStart = new Date(windowEnd.getTime() - 86_400_000);
 
     const samples = await this.prisma.paymentSample.findMany({
-      where: {
-        ...narratedSamples,
-        at: { gte: dayStart, lt: new Date(dayStart.getTime() + 86_400_000) },
-      },
+      where: { ...narratedSamples, at: { gte: windowStart, lt: windowEnd } },
       select: { at: true, success: true },
     });
 
     const buckets = Array.from({ length: DAY_BUCKETS }, () => ({ total: 0, ok: 0 }));
     for (const sample of samples) {
-      const index = bucketIndex(sample.at, dayStart);
+      const index = bucketIndex(sample.at, windowStart);
       if (index < 0 || index >= DAY_BUCKETS) continue;
       buckets[index].total += 1;
       if (sample.success) buckets[index].ok += 1;
@@ -283,25 +285,24 @@ export class DashboardService {
     const baseline =
       observed.length === 0 ? 0 : round1(observed.reduce((sum, rate) => sum + rate, 0) / observed.length);
 
-    // An incident is narrated if the cases it opened are, or if it opened none
-    // yet — a monitor that just tripped on live traffic has no cases to show.
+    // An incident belongs to the traffic that tripped it (D-142) — the live
+    // gateway's or the promoted batch's — which is the samples' own scope. The
+    // chart has one annotation, so it goes to the incident that opened the most
+    // cases in the window: a twelve-minute burst of six failures is a real
+    // verdict, but it must not take the marker off a five-hour outage.
     const incidentRow = await this.prisma.degradationIncident.findFirst({
-      where: {
-        merchantId,
-        detectedAt: { gte: dayStart },
-        OR: [{ cases: { some: narratedCases(merchantId) } }, { cases: { none: {} } }],
-      },
-      orderBy: { detectedAt: "desc" },
+      where: { ...narratedSamples, detectedAt: { gte: windowStart, lt: windowEnd } },
+      orderBy: [{ casesOpened: "desc" }, { detectedAt: "desc" }],
     });
 
     return {
       points: rates.map((rate, index) => ({
-        t: bucketLabel(index),
+        t: istClockLabel(bucketAt(windowStart, index)),
         rate: rate < 0 ? baseline : rate,
       })),
       incident: incidentRow
         ? {
-            index: clamp(bucketIndex(incidentRow.detectedAt, dayStart), 0, DAY_BUCKETS - 1),
+            index: clamp(bucketIndex(incidentRow.detectedAt, windowStart), 0, DAY_BUCKETS - 1),
             at: istClockLabel(incidentRow.detectedAt),
             casesOpened: incidentRow.casesOpened,
             recoveredAt: incidentRow.recoveredAt
@@ -437,18 +438,18 @@ function clamp(value: number, low: number, high: number): number {
 }
 
 /** Midnight IST of the day `at` falls in, as a UTC instant. */
-function istDayStart(at: Date): Date {
-  const ist = at.getTime() + IST_OFFSET_MS;
-  return new Date(Math.floor(ist / 86_400_000) * 86_400_000 - IST_OFFSET_MS);
+/** The first bucket boundary after `at` — the end of the bucket it falls in. */
+function bucketCeil(at: Date): Date {
+  const ms = BUCKET_MINUTES * 60_000;
+  return new Date(Math.ceil((at.getTime() + 1) / ms) * ms);
+}
+
+function bucketAt(windowStart: Date, index: number): Date {
+  return new Date(windowStart.getTime() + index * BUCKET_MINUTES * 60_000);
 }
 
 function bucketIndex(at: Date, dayStart: Date): number {
   return Math.floor((at.getTime() - dayStart.getTime()) / (BUCKET_MINUTES * 60_000));
-}
-
-function bucketLabel(index: number): string {
-  const hour = String(Math.floor(index / 2)).padStart(2, "0");
-  return `${hour}:${index % 2 === 0 ? "00" : "30"}`;
 }
 
 function istClockLabel(at: Date): string {

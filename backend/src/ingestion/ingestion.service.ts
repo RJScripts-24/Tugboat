@@ -98,6 +98,7 @@ export class IngestionService {
       at: event.occurredAt,
       method: event.instrument,
       bank: event.failure?.source,
+      simRunId: event.simRunId ?? null,
     });
 
     const record = await this.cases.openFromEvent(merchantId, event);
@@ -107,7 +108,11 @@ export class IngestionService {
       data: { processedAt: new Date(), caseId: record.id },
     });
 
-    const { incident } = await this.detector.syncIncident(merchantId, event.occurredAt);
+    const { incident } = await this.detector.syncIncident(
+      merchantId,
+      event.occurredAt,
+      event.simRunId ?? null,
+    );
     if (incident) {
       await this.detector.attachCase(incident.id, record.id);
     }

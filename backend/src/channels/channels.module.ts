@@ -5,7 +5,12 @@ import { EdgeTtsSynthesizer, SarvamTtsSynthesizer } from "../conversation/tts-sy
 import { VoiceAudioService, type TtsSynthesizer } from "../conversation/voice-audio.service";
 import { VoiceDialogueService } from "../conversation/voice-dialogue.service";
 import { AppConfigService } from "../config/app-config.service";
-import { CHANNEL_ADAPTERS, FETCH, type ChannelAdapter } from "./channel-adapter.interface";
+import {
+  CHANNEL_ADAPTERS,
+  FETCH,
+  SIMULATED_CHANNEL_ADAPTERS,
+  type ChannelAdapter,
+} from "./channel-adapter.interface";
 import { PaymentLinkService } from "./payment-links.service";
 import { RazorpayClient } from "./razorpay.client";
 import { RazorpayRetryAdapter } from "./razorpay-retry.adapter";
@@ -28,6 +33,9 @@ import { TwilioWhatsappAdapter } from "./twilio-whatsapp.adapter";
  *
  * Voice is the exception by design (PRD 7.8): telephony stays simulated and
  * labelled, and what `VOICE_TTS` switches on is the recording.
+ *
+ * A second token always holds the four simulated adapters: a case that belongs
+ * to a batch is worked from it whatever the lanes say (D-140).
  */
 const logger = new Logger("Channels");
 
@@ -83,6 +91,12 @@ function buildSynthesizer(config: AppConfigService): TtsSynthesizer | null {
     ResendEmailAdapter,
     TwilioWhatsappAdapter,
     {
+      provide: SIMULATED_CHANNEL_ADAPTERS,
+      inject: [SimulatedRetryAdapter, SimulatedWhatsappAdapter, SimulatedEmailAdapter, SimulatedVoiceAdapter],
+      useFactory: (...adapters: ChannelAdapter[]) =>
+        new Map<string, ChannelAdapter>(adapters.map((adapter) => [adapter.channel, adapter])),
+    },
+    {
       provide: CHANNEL_ADAPTERS,
       inject: [
         AppConfigService,
@@ -115,6 +129,6 @@ function buildSynthesizer(config: AppConfigService): TtsSynthesizer | null {
       },
     },
   ],
-  exports: [CHANNEL_ADAPTERS, VoiceDialogueService, PaymentLinkService],
+  exports: [CHANNEL_ADAPTERS, SIMULATED_CHANNEL_ADAPTERS, VoiceDialogueService, PaymentLinkService],
 })
 export class ChannelsModule {}

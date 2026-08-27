@@ -479,8 +479,11 @@ export class SimulationsService implements OnApplicationBootstrap, OnApplication
       });
     }
 
+    // Only other batches are cleared. A live case — a real webhook, a real
+    // customer — is narrated beside the promoted batch (D-120), and promoting
+    // an experiment must never delete the merchant's actual work (B-66, D-141).
     const removed = await this.prisma.case.deleteMany({
-      where: { merchantId, NOT: { simRunId: run.id } },
+      where: { merchantId, simRunId: { not: null }, NOT: { simRunId: run.id } },
     });
 
     await this.prisma.simRun.updateMany({
@@ -493,7 +496,7 @@ export class SimulationsService implements OnApplicationBootstrap, OnApplication
       data: { promotedAt: this.clock.now() },
     });
 
-    this.logger.log(`Promoted ${run.ref} to the demo dataset · ${removed.count} older cases cleared`);
+    this.logger.log(`Promoted ${run.ref} to the demo dataset · ${removed.count} cases from other batches cleared`);
 
     return { id: run.ref, promoted: true, clearedCases: removed.count };
   }

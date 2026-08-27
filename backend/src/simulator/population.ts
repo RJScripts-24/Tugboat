@@ -39,7 +39,7 @@ const DAY_MS = 24 * HOUR_MS;
  * is what the grid must not cost — a batch that only ever opened cases during
  * office hours could never prove that quiet hours defer anything.
  */
-const ARRIVAL_GRID_MS = 3 * HOUR_MS;
+const ARRIVAL_GRID_MS = 60_000;
 
 export type Observable = {
   code: string | null;
@@ -305,10 +305,11 @@ export function buildPopulation(config: PopulationConfig): GeneratedCase[] {
     // purpose: a batch that never opens a case at 23:40 IST would never prove
     // that quiet hours defer anything.
     //
-    // Quantised onto a half-hour grid so that cases arrive in small groups.
-    // Two hundred arrivals at two hundred distinct instants is two hundred
-    // round trips taken one at a time; on the grid they batch, and half an hour
-    // is far finer than any bound the policy expresses.
+    // Arrival instants are distinct to the minute. The runner still works them
+    // in hourly ticks — its own grid — so the cost is unchanged, but their
+    // failure samples no longer pile onto one instant: on the old three-hour
+    // grid nine failures landed together and tripped the degradation monitor
+    // at every grid point the moment the monitor could fire at all (B-67).
     const arrivalOffsetMs =
       Math.round((draw.next() * config.arrivalWindowMs) / ARRIVAL_GRID_MS) * ARRIVAL_GRID_MS;
     const occurredAt = new Date(config.startedAtMs + arrivalOffsetMs);

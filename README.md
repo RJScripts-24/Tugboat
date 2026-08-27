@@ -79,6 +79,10 @@ sites with a two-minute token minted by `/api/auth/socket-token` (D-137).
 with the same secret as `RAZORPAY_WEBHOOK_SECRET`. No tunnel is needed once
 the API has a public address.
 
+A batch started on any deployment is worked by the simulated adapters whatever
+`CHANNEL_MODE_*` says — a simulated customer never reaches Resend, Twilio or
+Razorpay (D-140) — and promoting it clears earlier batches, never a live case.
+
 Render's free plan sleeps after fifteen idle minutes; a webhook that arrives
 while it sleeps is retried by Razorpay, and the reconciler restores any step the
 sleep delayed — but for a judging window an always-on instance is the safer

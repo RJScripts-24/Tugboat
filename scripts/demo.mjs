@@ -307,7 +307,7 @@ async function runBatch(apiUrl, token, { batch, seed, promote }) {
     const promoted = await fetch(`${apiUrl}/simulations/${id}/promote`, { method: "POST", headers });
     if (!promoted.ok) throw new Error(`promote answered ${promoted.status}`);
     const outcome = await promoted.json();
-    console.log(`  promoted — the Control Tower now narrates ${id} (${outcome.clearedCases} older cases cleared)\n`);
+    console.log(`  promoted — the Control Tower now narrates ${id} (${outcome.clearedCases} cases from other batches cleared)\n`);
   } else {
     console.log(`  not promoted; POST /simulations/${id}/promote (or --promote next time) makes it the narrated batch\n`);
   }

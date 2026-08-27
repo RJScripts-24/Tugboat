@@ -53,7 +53,7 @@ export class DiagnoserService {
     const { pack } = await this.policy.getActive(record.merchantId);
     const floor = pack.escalation.confidenceFloor;
 
-    const openIncident = await this.detector.openIncident(record.merchantId);
+    const openIncident = await this.detector.openIncident(record.merchantId, record.simRunId ?? null);
 
     const signal: DiagnosisSignal = {
       caseType: record.type,

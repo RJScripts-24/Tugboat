@@ -99,8 +99,14 @@ const ARRIVAL_WINDOW_MS = 3 * DAY_MS;
  */
 const SIM_ANCHOR_MS = Date.UTC(2026, 7, 5, 3, 30); // 2026-08-05 09:00 IST
 
-/** Background successes per simulated hour, so the detector has a denominator. */
-const BASE_TRAFFIC_PER_HOUR = 9;
+/**
+ * Background payment attempts per simulated hour, so the detector has a
+ * denominator. Sized to the batch: two hundred failures in three days at a
+ * five-percent failure rate is a merchant taking about sixty payments an hour.
+ * The old nine could never fill the monitor's minimum window, so the dip was
+ * drawn on the chart but never detected (B-67).
+ */
+const BASE_TRAFFIC_PER_HOUR = 60;
 
 /**
  * Cases worked at once.
@@ -118,6 +124,14 @@ const MAX_JOBS_PER_DRAIN = 20_000;
 
 /** Simulated instants are visited on the hour, so a slot's work overlaps. */
 const TICK_GRID_MS = HOUR_MS;
+/**
+ * How often the degradation monitor is asked on the simulated clock. In
+ * production every recorded outcome asks it, successes included; the batch
+ * seeds its successes up front, so without this sweep the monitor was asked
+ * only when a failure arrived — and one quiet hour let an outage become its
+ * own baseline before anyone looked (B-67).
+ */
+const MONITOR_STEP_MS = 15 * 60_000;
 
 export type RunConfig = {
   batchSize: number;
@@ -258,12 +272,13 @@ export class BatchRunnerService {
       setSimTime(0);
       this.registerHandler(batchQueue, caseIds, guard);
 
-      await this.seedBackgroundTraffic(merchantId, runId, population, startedAtMs);
+      await this.seedBackgroundTraffic(merchantId, runId, runSeed, population, startedAtMs);
 
       const arrivals = [...population].sort((a, b) => a.arrivalOffsetMs - b.arrivalOffsetMs);
       const reactions: PendingReaction[] = [];
       let nextArrival = 0;
       let lastScanMs = startedAtMs - 1;
+      let lastMonitorMs = startedAtMs;
       let lastProgress = -1;
 
       for (;;) {
@@ -312,9 +327,23 @@ export class BatchRunnerService {
           due.push(arrivals[nextArrival]);
           nextArrival += 1;
         }
-        if (due.length > 0) {
-          await this.ingestBatch(due, caseIds, reactions, startedAtMs + WINDOW_MS, guard);
+        // Monitor marks and arrivals interleave in time order. A mark evaluated
+        // after a later arrival had opened an incident would close it into the
+        // past — "recovered 10:15, detected 10:45" — and the next mark would
+        // open a duplicate.
+        const monitorUpTo = async (untilMs: number) => {
+          for (let at = lastMonitorMs + MONITOR_STEP_MS; at <= untilMs; at += MONITOR_STEP_MS) {
+            await guard("monitor", null, () =>
+              this.detector.syncIncident(merchantId, new Date(at), runId),
+            );
+            lastMonitorMs = at;
+          }
+        };
+        for (const generated of due) {
+          await monitorUpTo(generated.event.occurredAt.getTime());
+          await this.ingestBatch([generated], caseIds, reactions, startedAtMs + WINDOW_MS, guard);
         }
+        await monitorUpTo(nowMs);
 
         await batchQueue.drain(nowMs, {
           concurrency: CONCURRENCY,
@@ -501,16 +530,22 @@ export class BatchRunnerService {
    * for looks, to the detector, like a gateway that has never once worked. The
    * baseline would then be zero, no dip would ever be unusual, and the z-score
    * monitor the Detector exists for could not fire. These rows are the ordinary
-   * business the batch is a slice of, with one deliberate dip: the window the
-   * gateway-degraded cases were drawn to fall in.
+   * business the batch is a slice of, with one deliberate dip on the final
+   * afternoon of the arrival window — 14:00 to 19:00 IST — so that the 24 hours
+   * the promoted batch's dashboard chart shows hold the incident the Detector
+   * opened (D-142).
    */
   private async seedBackgroundTraffic(
     merchantId: string,
     runId: string,
+    runSeed: string,
     population: GeneratedCase[],
     startedAtMs: number,
   ): Promise<void> {
-    const rng = new SeededRng(`${runId}/traffic`);
+    // Drawn from the seed, not the run id: the traffic decides when the
+    // detector fires and which cases R-04 explains, so two runs of one seed
+    // must draw the same outage (D-143).
+    const rng = new SeededRng(`${runSeed}/traffic`);
     const samples: {
       merchantId: string;
       success: boolean;
@@ -518,15 +553,18 @@ export class BatchRunnerService {
       simRunId: string;
     }[] = [];
 
-    // The dip sits inside the arrival window so the cases opened during it can
-    // be explained by it.
-    const dipStart = ARRIVAL_WINDOW_MS * 0.28;
+    // Inside the arrival window, so the cases opened during it can be explained
+    // by it, and on its last day, so the chart's window holds it. Arrivals start
+    // at 09:00 IST (SIM_ANCHOR_MS); nineteen hours before they end is 14:00 IST
+    // on the final day.
+    const dipStart = ARRIVAL_WINDOW_MS - 19 * HOUR_MS;
     const dipEnd = dipStart + 5 * HOUR_MS;
 
-    for (let hour = 0; hour * HOUR_MS < ARRIVAL_WINDOW_MS + DAY_MS; hour += 1) {
+    for (let hour = 0; hour * HOUR_MS < ARRIVAL_WINDOW_MS; hour += 1) {
       const offset = hour * HOUR_MS;
       const degraded = offset >= dipStart && offset < dipEnd;
-      const count = Math.max(2, Math.round(BASE_TRAFFIC_PER_HOUR * (degraded ? 0.45 : 1)));
+      // Attempts do not stop during an outage; captures do.
+      const count = BASE_TRAFFIC_PER_HOUR;
 
       for (let i = 0; i < count; i += 1) {
         samples.push({
