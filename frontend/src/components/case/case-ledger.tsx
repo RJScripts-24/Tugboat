@@ -15,11 +15,10 @@ import {
 import { MoneyValue, Section } from "@/components/dashboard/primitives";
 import { TONE_HEX } from "@/lib/dashboard-data";
 import { formatPercent } from "@/lib/money";
+import { formatSpan, stampOf } from "@/lib/clock";
 import {
   STAGE_META,
-  formatSpan,
   paiseText,
-  stampOf,
   type AuditEntry,
   type CaseDetail,
 } from "@/lib/case-detail-data";
@@ -37,25 +36,27 @@ import type { CaseState, OverrideKind } from "@/lib/event-store";
  */
 export function CaseLedger({
   detail,
-  extraAudit,
   state,
   onOverride,
+  busy = false,
 }: {
   detail: CaseDetail;
-  /** Ledger rows written since the page opened - scheduled work and overrides. */
-  extraAudit: AuditEntry[];
-  /** Folded from the event log, never from a flag this component owns. */
+  /** Folded from the case's own ledger chain, never from a flag this component owns. */
   state: CaseState;
   onOverride: (kind: OverrideKind) => void;
+  /** An override is in flight — the buttons say so rather than firing twice. */
+  busy?: boolean;
 }) {
-  const rows = [...detail.audit, ...extraAudit];
+  // One list, straight off the response. This used to be the server's rows plus
+  // whatever the browser had appended since; there is nothing to append now.
+  const rows = detail.audit;
 
   return (
     <div className="space-y-3 self-start">
       <OutcomeCard detail={detail} state={state} />
       <CostCard detail={detail} />
       <AuditPanel caseId={detail.record.id} rows={rows} />
-      <Overrides state={state} onOverride={onOverride} stage={detail.record.stage} />
+      <Overrides state={state} onOverride={onOverride} stage={detail.record.stage} busy={busy} />
     </div>
   );
 }
@@ -402,11 +403,16 @@ function Overrides({
   state,
   onOverride,
   stage,
+  busy,
 }: {
   state: CaseState;
   onOverride: (kind: OverrideKind) => void;
   stage: string;
+  busy: boolean;
 }) {
+  // A recovered case is finished and the API refuses to override one, so the
+  // button is disabled rather than offered and then rejected. Halted and
+  // exhausted cases stay closed here for the same reason they did before.
   const closed = stage === "recovered" || stage === "halted" || stage === "exhausted";
   // Resolving externally is terminal. Everything else stays available, because
   // an append-only log has no reason to forbid a second pause - it just
@@ -420,7 +426,7 @@ function Overrides({
           type="button"
           onClick={() => onOverride(state.paused ? "resume" : "pause")}
           className="btn-op-quiet"
-          disabled={closed || done}
+          disabled={busy || closed || done}
         >
           <PauseIcon className="h-[11px] w-[11px]" />
           {state.paused ? "Resume agent" : "Pause agent on this case"}
@@ -430,7 +436,7 @@ function Overrides({
           type="button"
           onClick={() => onOverride("escalate")}
           className="btn-op-quiet"
-          disabled={closed || done || state.takenByHuman}
+          disabled={busy || closed || done || state.takenByHuman}
         >
           <EscalateIcon className="h-[11px] w-[11px]" />
           Escalate to me
@@ -440,7 +446,7 @@ function Overrides({
           type="button"
           onClick={() => onOverride("resolve")}
           className="btn-op-quiet"
-          disabled={done}
+          disabled={busy || done}
         >
           <RecoveredIcon className="h-[11px] w-[11px]" />
           Mark resolved externally

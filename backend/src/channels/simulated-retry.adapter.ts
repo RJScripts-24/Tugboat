@@ -43,7 +43,10 @@ export class SimulatedRetryAdapter implements ChannelAdapter {
     // Each attempt is a little likelier than the last: funds arrive, outages
     // clear. Capped, because a fourth retry is not a coin flip.
     const odds = Math.min(0.75, (CAPTURE_ODDS[cause] ?? 0.15) * (1 + 0.35 * (request.attempt - 1)));
-    const captured = seededUnit(seed) < odds;
+    // The caller's answer wins where there is one: a graded batch decides this
+    // from the true cause and the customer's balance, not from the diagnosis
+    // the agent happened to reach.
+    const captured = request.captured ?? seededUnit(seed) < odds;
 
     return {
       channelRef: razorpayPaymentId(pass.caseId, request.attempt),

@@ -32,17 +32,32 @@ const y = (rate: number) => PAD.top + ((Y_MAX - rate) / (Y_MAX - Y_MIN)) * PLOT_
 export function PaymentPerformance({ series }: { series: SuccessRateSeries }) {
   const { points, incident, baseline, current } = series;
   const count = points.length;
-  const trough = points[incident.index].rate;
+
+  /**
+   * The dip annotation, or nothing.
+   *
+   * `incident` is nullable now (D-104). A merchant whose gateway behaved has no
+   * degradation to point at, and drawing one anyway — at the day's lowest
+   * bucket, which is what a non-null placeholder would have to pick — would put
+   * a red marker and the words "Degradation detected" on a healthy chart. The
+   * line, the baseline and the axis are all still drawn; only the annotation is
+   * conditional.
+   */
+  const dip =
+    incident === null
+      ? null
+      : {
+          trough: points[incident.index]?.rate ?? baseline,
+          from: x(incident.index - 1, count),
+          to: x(incident.index + 3, count),
+          markerX: x(incident.index, count),
+        };
 
   const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i, count)} ${y(p.rate)}`).join(" ");
   const area = `${line} L${x(count - 1, count)} ${PAD.top + PLOT_H} L${x(0, count)} ${
     PAD.top + PLOT_H
   } Z`;
 
-  const dipFrom = x(incident.index - 1, count);
-  const dipTo = x(incident.index + 3, count);
-  const troughX = x(incident.index, count);
-  const troughY = y(trough);
 
   return (
     <Section
@@ -59,7 +74,11 @@ export function PaymentPerformance({ series }: { series: SuccessRateSeries }) {
           viewBox={`0 0 ${W} ${H}`}
           className="h-auto w-full"
           role="img"
-          aria-label={`Payment success rate over 24 hours. Current ${current} percent against a ${baseline} percent baseline. Degradation detected at ${incident.at}, trough ${trough} percent, ${incident.casesOpened} cases opened.`}
+          aria-label={
+            incident && dip
+              ? `Payment success rate over 24 hours. Current ${current} percent against a ${baseline} percent baseline. Degradation detected at ${incident.at}, trough ${dip.trough} percent, ${incident.casesOpened} cases opened.`
+              : `Payment success rate over 24 hours. Current ${current} percent against a ${baseline} percent baseline. No degradation detected.`
+          }
         >
           <defs>
             <linearGradient id="rate-fill" x1="0" y1="0" x2="0" y2="1">
@@ -91,15 +110,17 @@ export function PaymentPerformance({ series }: { series: SuccessRateSeries }) {
             </g>
           ))}
 
-          {/* The window the z-score monitor flagged */}
-          <rect
-            x={dipFrom}
-            y={PAD.top}
-            width={dipTo - dipFrom}
-            height={PLOT_H}
-            fill="var(--color-halted)"
-            fillOpacity="0.08"
-          />
+          {/* The window the z-score monitor flagged, when it flagged one. */}
+          {dip ? (
+            <rect
+              x={dip.from}
+              y={PAD.top}
+              width={dip.to - dip.from}
+              height={PLOT_H}
+              fill="var(--color-halted)"
+              fillOpacity="0.08"
+            />
+          ) : null}
 
           <line
             x1={PAD.left}
@@ -128,17 +149,21 @@ export function PaymentPerformance({ series }: { series: SuccessRateSeries }) {
             />
           </g>
 
-          <line
-            x1={troughX}
-            x2={troughX}
-            y1={troughY}
-            y2={PAD.top + PLOT_H}
-            stroke="var(--color-halted)"
-            strokeWidth="1"
-            strokeDasharray="3 3"
-            strokeOpacity="0.7"
-          />
-          <circle cx={troughX} cy={troughY} r="2.8" fill="var(--color-halted)" />
+          {dip ? (
+            <>
+              <line
+                x1={dip.markerX}
+                x2={dip.markerX}
+                y1={y(dip.trough)}
+                y2={PAD.top + PLOT_H}
+                stroke="var(--color-halted)"
+                strokeWidth="1"
+                strokeDasharray="3 3"
+                strokeOpacity="0.7"
+              />
+              <circle cx={dip.markerX} cy={y(dip.trough)} r="2.8" fill="var(--color-halted)" />
+            </>
+          ) : null}
 
           {[0, 12, 24, 36, count - 1].map((i) => (
             <text
@@ -155,20 +180,37 @@ export function PaymentPerformance({ series }: { series: SuccessRateSeries }) {
         </svg>
       </div>
 
-      {/* The one alert this panel exists to raise. */}
+      {/* The one alert this panel exists to raise — and the honest line when
+          there is nothing to raise. A panel that only ever appears during an
+          incident is a panel nobody knows is working. */}
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 border-t border-white/[0.06] px-5 py-3">
-        <span
-          className="h-[6px] w-[6px] shrink-0 translate-y-[-1px] rounded-full bg-halted"
-          aria-hidden
-        />
-        <span className="text-[13px] text-txt">Degradation detected {incident.at}</span>
-        <span className="mono text-[11.5px] text-txt-faint">
-          trough {trough}% · {incident.casesOpened} cases opened · recovered{" "}
-          {incident.recoveredAt}
-        </span>
-        <ChalkNote tone="gold" className="ml-0.5">
-          BOA → silent retry, no customer contact
-        </ChalkNote>
+        {incident && dip ? (
+          <>
+            <span
+              className="h-[6px] w-[6px] shrink-0 translate-y-[-1px] rounded-full bg-halted"
+              aria-hidden
+            />
+            <span className="text-[13px] text-txt">Degradation detected {incident.at}</span>
+            <span className="mono text-[11.5px] text-txt-faint">
+              trough {dip.trough}% · {incident.casesOpened} cases opened · recovered{" "}
+              {incident.recoveredAt}
+            </span>
+            <ChalkNote tone="gold" className="ml-0.5">
+              BOA → silent retry, no customer contact
+            </ChalkNote>
+          </>
+        ) : (
+          <>
+            <span
+              className="h-[6px] w-[6px] shrink-0 translate-y-[-1px] rounded-full bg-recovered"
+              aria-hidden
+            />
+            <span className="text-[13px] text-txt">No degradation detected today</span>
+            <span className="mono text-[11.5px] text-txt-faint">
+              z-score monitor watching 5-minute buckets against the trailing hour
+            </span>
+          </>
+        )}
       </div>
     </Section>
   );

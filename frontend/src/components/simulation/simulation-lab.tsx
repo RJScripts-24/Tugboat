@@ -1,28 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
-import { CheckIcon, DownloadIcon, PlayIcon, RetryIcon } from "@/components/dashboard/icons";
-import type { ChainTip } from "@/lib/audit-data";
-import { appendEvent } from "@/lib/event-store";
-import {
-  buildReportJson,
-  type RunStep,
-  type SavedRun,
-  type SimulationConfig,
-} from "@/lib/simulation-data";
-import { EvidenceReport, type Report } from "./evidence-report";
+import { DownloadIcon, PlayIcon, RetryIcon } from "@/components/dashboard/icons";
+import { promoteSimulation, startSimulation } from "@/lib/actions";
+import { useSimRun } from "@/lib/live";
+import type { EvidenceReport, SavedRun, SimulationConfig } from "@/lib/simulation-data";
+import { EvidenceReport as EvidenceReportView, type Report } from "./evidence-report";
 import { HonestyCard, ReportContents, RunConfig } from "./run-config";
 import { RunHistory } from "./run-history";
 import { RunProgress } from "./run-progress";
 
-/** How long the replay takes. Long enough to read, short enough to sit through. */
-const RUN_MS = 8_600;
+/** How long a receipt stays on screen. Matched to the other two write surfaces. */
+const NOTE_MS = 8_000;
 
 type Phase = "configure" | "running" | "report";
 
 /**
- * The Simulation Lab (PRD 6.3, page 6) - the evidence page.
+ * The Simulation Lab (PRD 6.3, page 6) — the evidence page.
  *
  * Three states in one component because they are one thing: a configuration,
  * the run it produces, and the report that run leaves behind. Splitting them
@@ -30,36 +26,43 @@ type Phase = "configure" | "running" | "report";
  * statement of what produced it, which is the failure mode this whole page
  * exists to avoid.
  *
- * The run is a replay of an executed batch, not a live one. The real runner
- * streams `simulation.progress` frames over Socket.IO (PRD 7.3) and this
- * component draws them; here the frames are interpolated from a fixed duration
- * against a report that has already been computed. Nothing about the numbers
- * changes when the gateway lands - only where the progress comes from.
+ * The run is real. It used to be a replay: a `requestAnimationFrame` loop
+ * advancing a bar over 8.6 seconds while the counters interpolated toward a
+ * report that had already been computed, with a fixed script of runner lines
+ * pinned to fractions of the batch. Pressing Run now posts a `SimulationConfig`
+ * to the API, which answers 202 with a run id, and this component subscribes to
+ * that run's own socket room. The bar moves because cases are being worked; the
+ * counters are cases really closed and contacts really sent; and the whole
+ * thing takes minutes rather than seconds, because a 214-case batch against a
+ * hosted database is roughly thirty round trips per case (D-116).
+ *
+ * That is the trade the page makes on purpose. A direct-insert generator would
+ * finish in seconds and prove nothing.
  */
 export function SimulationLab({
   defaultConfig,
   report,
-  script,
-  tip,
+  runs,
 }: {
   defaultConfig: SimulationConfig;
-  report: Report;
-  script: RunStep[];
-  /** Where the `policy` chain ends, so a saved run can be recorded on it. */
-  tip: ChainTip;
+  /** Null before any batch has completed — the page says so rather than drawing an empty one. */
+  report: EvidenceReport | null;
+  runs: SavedRun[];
 }) {
+  const router = useRouter();
   const [config, setConfig] = useState<SimulationConfig>(defaultConfig);
-  const [phase, setPhase] = useState<Phase>("configure");
-  const [progress, setProgress] = useState(0);
-  const [saved, setSaved] = useState<SavedRun[]>([]);
+  const [phase, setPhase] = useState<Phase>(report ? "report" : "configure");
+  const [runId, setRunId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const frame = useRef<number | null>(null);
+  const [busy, startTransition] = useTransition();
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const frame = useSimRun(phase === "running" ? runId : null);
 
   const flash = useCallback((message: string) => {
     setNote(message);
     if (noteTimer.current) clearTimeout(noteTimer.current);
-    noteTimer.current = setTimeout(() => setNote(null), 5_000);
+    noteTimer.current = setTimeout(() => setNote(null), NOTE_MS);
   }, []);
 
   useEffect(
@@ -69,170 +72,166 @@ export function SimulationLab({
     [],
   );
 
-  const tugboat = report.arms.find((arm) => arm.key === "tugboat");
-  const contacts = tugboat?.contacts ?? 0;
-  const stopped = report.rules
-    .filter((rule) => rule.terminal)
-    .reduce((sum, rule) => sum + rule.fired, 0);
+  /**
+   * The run finished while we were watching it.
+   *
+   * `router.refresh()` rather than a fetch of the report here: the page's
+   * server function already knows how to find the newest completed run and read
+   * its artifact, and asking it again is one implementation of that rather than
+   * two.
+   */
+  useEffect(() => {
+    if (phase !== "running") return;
 
-  const stop = useCallback(() => {
-    if (frame.current !== null) cancelAnimationFrame(frame.current);
-    frame.current = null;
-  }, []);
-
-  useEffect(() => stop, [stop]);
-
-  const run = useCallback(() => {
-    stop();
-
-    const reduced =
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-    if (reduced) {
-      setProgress(1);
+    if (frame.status === "completed") {
       setPhase("report");
+      router.refresh();
+      flash(`${runId} completed — the report below is this run's own artifact`);
       return;
     }
 
-    setProgress(0);
-    setPhase("running");
+    if (frame.status === "failed") {
+      setPhase("configure");
+      router.refresh();
+      // Named rather than swallowed. A run that died keeps the cases it did
+      // produce, because they are a real partial batch and deleting them would
+      // destroy the evidence of what went wrong.
+      flash(`${runId} failed — ${frame.failureReason ?? "no reason recorded"}`);
+    }
+  }, [flash, frame.failureReason, frame.status, phase, router, runId]);
 
-    const start = performance.now();
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / RUN_MS);
-      setProgress(t);
-      if (t < 1) {
-        frame.current = requestAnimationFrame(tick);
+  const run = useCallback(() => {
+    startTransition(async () => {
+      const result = await startSimulation(config);
+
+      if (!result.ok) {
+        flash(`The batch did not start — ${result.error}`);
         return;
       }
-      frame.current = null;
-      setPhase("report");
-    };
 
-    frame.current = requestAnimationFrame(tick);
-  }, [stop]);
+      setRunId(result.data.id);
+      setPhase("running");
+      flash(`${result.data.id} accepted — ${config.batchSize} cases on seed ${config.seed}`);
+    });
+  }, [config, flash]);
 
-  const cancel = useCallback(() => {
-    stop();
-    setProgress(0);
-    setPhase("configure");
-  }, [stop]);
+  /**
+   * Cancelling stops watching, not the batch.
+   *
+   * Said plainly in the receipt, because the honest thing this button can do is
+   * leave the room: the run is a background process on the server working real
+   * cases through the real gate, and a browser closing a socket has no business
+   * killing it half way through a case.
+   */
+  const stopWatching = useCallback(() => {
+    setPhase(report ? "report" : "configure");
+    flash(`Stopped watching ${runId} — the batch is still running on the server`);
+  }, [flash, report, runId]);
 
   /**
    * The report as a file (PRD 6.3, page 6 · PRD 12).
    *
-   * The whole thing, exceptions included, with the seed and the policy version
-   * in the header so it can be checked without running anything. Built in the
-   * browser from the same data the page is rendering, so the download and the
-   * screen can never disagree.
+   * The artifact itself, byte for byte — no longer rebuilt in the browser from
+   * the numbers on screen. There is nothing left to rebuild it from that is not
+   * this object, which is the point: the file a judge downloads and the file the
+   * repository commits are the same JSON the API stored on the run row.
    */
   const download = useCallback(() => {
-    const payload = buildReportJson(config);
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    if (!report) return;
+
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `tugboat-simulation-seed-${config.seed}.json`;
+    link.download = `tugboat-batch-seed-${report.run.seed}.json`;
     document.body.append(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    flash(`tugboat-simulation-seed-${config.seed}.json downloaded`);
-  }, [config, flash]);
+    flash(`tugboat-batch-seed-${report.run.seed}.json downloaded`);
+  }, [flash, report]);
 
-  /**
-   * The report as a PDF (PRD 6.3, page 6 · PRD 12).
-   *
-   * Through the browser's own print pipeline rather than a bundled PDF
-   * library: the report is already a laid-out document, a print stylesheet
-   * turns it into a page-broken one, and "Save as PDF" produces a file that
-   * matches what a judge saw on screen. Shipping a second rendering engine to
-   * redraw the same thing would be a megabyte of dependency and a new way for
-   * the paper and the screen to disagree.
-   */
   const printReport = useCallback(() => {
     if (phase !== "report") return;
     window.print();
   }, [phase]);
 
   /**
-   * Save run (PRD 6.3, page 6 - "Save run", "run-history list enabling
-   * side-by-side reruns").
+   * Promote (D-94) — make this run the batch the Control Tower narrates.
    *
-   * Saving puts the run in the history table *and* writes a row to the ledger,
-   * because a saved evidence run is a claim somebody made at a moment in time
-   * and the whole product's argument is that those are recorded.
+   * Destructive and deliberately separate from running one: it clears whatever
+   * the pipeline was showing, and pressing Run in the lab must not silently
+   * replace the batch a merchant is in the middle of presenting.
    */
-  const saveRun = useCallback(() => {
-    const id = `SIM-${String(config.seed).padStart(4, "0")}-S${saved.length + 1}`;
-    const tugboatArm = report.arms.find((arm) => arm.key === "tugboat");
+  const promote = useCallback(() => {
+    if (!report) return;
 
-    const run: SavedRun = {
-      id,
-      seed: config.seed,
-      batchSize: config.batchSize,
-      difficulty: config.difficulty,
-      policyVersion: "v4",
-      recoveredPaise: report.headline.recoveredPaise,
-      recoveryRate: report.headline.recoveryRate,
-      baselineRate: report.headline.baselineRate,
-      accuracy: report.grading.accuracy,
-      costPer100Paise: tugboatArm?.costPer100Paise ?? 0,
-      ranMinutesAgo: 0,
-    };
+    startTransition(async () => {
+      const result = await promoteSimulation(report.run.id);
 
-    setSaved((current) => [run, ...current]);
+      if (!result.ok) {
+        flash(`Could not promote ${report.run.id} — ${result.error}`);
+        return;
+      }
 
-    appendEvent({
-      chain: "policy",
-      caseId: null,
-      actor: "HUMAN",
-      action: "EVIDENCE_RUN_SAVED",
-      detail: `${id} saved · seed ${config.seed} · ${config.batchSize} cases`,
-      tip,
-      payload: {
-        run_id: id,
-        seed: config.seed,
-        batch_size: config.batchSize,
-        difficulty: config.difficulty,
-        arms: config.arms,
-        recovered_paise: run.recoveredPaise,
-        recovery_rate: Number(run.recoveryRate.toFixed(4)),
-        baseline_rate: Number(run.baselineRate.toFixed(4)),
-        diagnosis_accuracy: Number(run.accuracy.toFixed(4)),
-        saved_by: "Demo Merchant",
-      },
+      router.refresh();
+      flash(
+        `${report.run.id} is now the batch the Control Tower narrates · ${result.data.clearedCases} older cases cleared`,
+      );
     });
+  }, [flash, report, router]);
 
-    flash(`${id} saved to the run history and written to the ledger`);
-  }, [config, flash, report, saved.length, tip]);
+  /** The report's blocks, under the names this page's components already use. */
+  const view: Report | null = useMemo(
+    () =>
+      report
+        ? {
+            headline: report.headline,
+            arms: report.arms,
+            byType: report.byCaseType,
+            grading: report.diagnosis,
+            rules: report.stoppingRules,
+            compliance: report.compliance,
+            escalations: report.escalations,
+            exceptions: report.exceptions,
+            runs,
+          }
+        : null,
+    [report, runs],
+  );
 
-  /** Saved-this-session runs first, then the shipped history. */
-  const runs = useMemo(() => [...saved, ...report.runs], [saved, report.runs]);
+  const tugboat = report?.arms.find((arm) => arm.key === "tugboat");
+  const current = runs.find((row) => row.current);
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* The counterpart of the Control Tower's live badge: this run is
-            fixed, and the whole value of it is that it does not move. */}
         <p className="mono flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-txt-faint">
+          {/* The counterpart of the Control Tower's live badge: a finished run
+              is fixed, and the whole value of it is that it does not move. */}
           <span className="inline-flex items-center gap-1.5 rounded-[2px] border border-[rgba(154,234,255,0.32)] px-2 py-[2px] text-diagnosis">
-            PINNED EVIDENCE RUN
+            {phase === "running" ? "BATCH RUNNING" : "PINNED EVIDENCE RUN"}
           </span>
           <span>
             {phase === "running"
-              ? `running · seed ${config.seed} · ${config.arms.length} arms · ${config.batchSize} cases`
-              : `seed ${config.seed} · ${report.headline.cases} cases · ${report.grading.graded} diagnoses graded · reruns identical`}
+              ? `${runId} · seed ${config.seed} · ${config.batchSize} cases · ${config.arms.length} arms`
+              : report
+                ? `${report.run.id} · seed ${report.run.seed} · ${report.headline.cases} cases · ${report.diagnosis.graded} diagnoses graded · reruns of this seed reproduce these figures`
+                : "no completed run yet · configure a batch and press Run"}
           </span>
         </p>
 
         <div className="no-print flex flex-wrap items-center gap-2.5">
-          {phase === "report" ? (
+          {phase === "report" && report ? (
             <>
-              <button type="button" className="btn-op-quiet" onClick={saveRun}>
-                <CheckIcon className="h-[12px] w-[12px]" />
-                Save run
+              <button
+                type="button"
+                className="btn-op-quiet"
+                onClick={promote}
+                disabled={busy || current?.id === report.run.id}
+              >
+                <RetryIcon className="h-[12px] w-[12px]" />
+                {current?.id === report.run.id ? "Narrated by the Tower" : "Promote to demo batch"}
               </button>
               <button type="button" className="btn-op-quiet" onClick={download}>
                 <DownloadIcon className="h-[12px] w-[12px]" />
@@ -245,20 +244,24 @@ export function SimulationLab({
             </>
           ) : null}
 
-          {phase === "configure" ? (
+          {phase === "configure" && report ? (
             <button type="button" className="btn-op-quiet" onClick={() => setPhase("report")}>
               Open the last report
             </button>
           ) : null}
 
           {phase === "running" ? null : (
-            <button onClick={run} className="btn-gold gap-2.5 px-6 py-[11px] text-[14.5px]">
+            <button
+              onClick={run}
+              disabled={busy}
+              className="btn-gold gap-2.5 px-6 py-[11px] text-[14.5px]"
+            >
               {phase === "report" ? (
                 <RetryIcon className="h-[13px] w-[13px]" />
               ) : (
                 <PlayIcon className="h-[12px] w-[12px]" />
               )}
-              {phase === "report" ? "Run again" : "Run batch"}
+              {busy ? "Starting…" : phase === "report" ? "Run again" : "Run batch"}
             </button>
           )}
         </div>
@@ -270,9 +273,9 @@ export function SimulationLab({
             <RunConfig config={config} onChange={setConfig} />
             <div className="space-y-3">
               <HonestyCard
-                atRiskPaise={report.headline.atRiskPaise}
-                cases={report.headline.cases}
-                contacts={contacts}
+                atRiskPaise={report?.headline.atRiskPaise ?? 0}
+                cases={report?.headline.cases ?? 0}
+                contacts={tugboat?.contacts ?? 0}
               />
               <ReportContents />
             </div>
@@ -284,13 +287,10 @@ export function SimulationLab({
       {phase === "running" ? (
         <RunProgress
           config={config}
-          progress={progress}
-          headline={report.headline}
-          escalations={report.escalations.total}
-          stopped={stopped}
-          contacts={contacts}
-          script={script}
-          onCancel={cancel}
+          progress={frame.progress}
+          totals={frame.totals}
+          steps={frame.steps}
+          onCancel={stopWatching}
         />
       ) : null}
 
@@ -300,15 +300,22 @@ export function SimulationLab({
         </p>
       ) : null}
 
-      {phase === "report" ? (
+      {phase === "report" && report && view ? (
         <>
           {/* Only on paper: a printed report leaves the app behind, so it has
               to carry its own provenance. */}
           <p className="print-only mono text-[11px]">
-            Tugboat evidence report · pinned run · seed {config.seed} · {config.batchSize} cases ·
-            policy v4 · tugboat@0.4.0 · reruns of this seed reproduce these figures exactly.
+            Tugboat evidence report · {report.run.id} · seed {report.run.seed} ·{" "}
+            {report.run.batchSize} cases · policy {report.run.policyVersion} ·{" "}
+            {report.run.codeVersion} · reruns of this seed reproduce these figures.
           </p>
-          <EvidenceReport config={config} report={report} executed={defaultConfig} runs={runs} />
+          <EvidenceReportView
+            config={config}
+            report={view}
+            executed={defaultConfig}
+            provenance={report.run}
+            runs={runs}
+          />
         </>
       ) : null}
     </div>

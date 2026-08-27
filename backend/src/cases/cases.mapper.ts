@@ -1,4 +1,4 @@
-import type { Case, CaseEvent, CaseStage, Customer } from "@prisma/client";
+import type { Action, Case, CaseEvent, CaseStage, Channel, Customer } from "@prisma/client";
 
 import { toCaseRef } from "../common/case-ref";
 import { maskedContact } from "../common/mask";
@@ -94,6 +94,63 @@ export function toTimelineEvent(event: CaseEvent) {
     summary: event.summary,
     badge: event.badgeLabel ? { label: event.badgeLabel, tone: event.badgeTone ?? "neutral" } : undefined,
     body: event.body ?? undefined,
+  };
+}
+
+/** The event kind a scheduled action will write when it runs. */
+const PENDING_KIND: Record<Channel, CaseEvent["kind"]> = {
+  EMAIL: "EMAIL_SENT",
+  WHATSAPP: "WHATSAPP_SENT",
+  VOICE: "VOICE_CALL",
+  RETRY: "RETRY_EXECUTED",
+};
+
+const PENDING_LABEL: Record<Channel, string> = {
+  EMAIL: "Email",
+  WHATSAPP: "WhatsApp nudge",
+  VOICE: "Voice call",
+  RETRY: "Silent retry",
+};
+
+/**
+ * A scheduled action, as the greyed-out node at the end of the timeline.
+ *
+ * The contract says pending events carry `minutesAgo: 0`, which is the honest
+ * value: this has not happened, so there is no elapsed time to state. When it
+ * *does* happen it will be written as a real event by the Executor, with its
+ * own sequence number — this projection is never persisted, which is what
+ * stops a plan that was later blocked from leaving a fossil in the log.
+ */
+export function toPendingEvent(action: Action, seq: number) {
+  const channel = action.channel ?? "RETRY";
+  const when = action.scheduledFor;
+
+  return {
+    id: `pending-${action.id}`,
+    seq,
+    kind: PENDING_KIND[channel],
+    minutesAgo: 0,
+    title: `${PENDING_LABEL[channel]} scheduled`,
+    summary: when
+      ? `Attempt ${action.attempt} · due ${when.toISOString().slice(0, 16).replace("T", " ")} UTC · the gate runs again first`
+      : `Attempt ${action.attempt} · queued · the gate runs again first`,
+    badge: { label: "SCHEDULED", tone: "neutral" },
+    body: {
+      type: "facts",
+      rows: [
+        { label: "Channel", value: PENDING_LABEL[channel] },
+        { label: "Attempt", value: String(action.attempt), mono: true },
+        {
+          label: "Due",
+          value: when ? when.toISOString() : "next drain",
+          mono: true,
+        },
+        {
+          label: "Before it runs",
+          value: "The PolicyGate re-evaluates — a case that opted out in the meantime is not sent to",
+        },
+      ],
+    },
   };
 }
 

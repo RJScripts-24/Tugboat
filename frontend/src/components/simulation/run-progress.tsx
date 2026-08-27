@@ -5,7 +5,8 @@ import type { ReactNode } from "react";
 import { ChalkRule, ChalkStroke, ChalkTrack } from "@/components/dashboard/chalk";
 import { MoneyValue, Section } from "@/components/dashboard/primitives";
 import { ACTOR_TONE, TONE_HEX } from "@/lib/dashboard-data";
-import type { Headline, RunStep, SimulationConfig } from "@/lib/simulation-data";
+import type { RunTotals } from "@/lib/live";
+import type { RunStep, SimulationConfig } from "@/lib/simulation-data";
 import { ConfigSummary } from "./run-config";
 
 /**
@@ -17,42 +18,42 @@ import { ConfigSummary } from "./run-config";
  * and the last two moving is what tells a room that the bounds are live rather
  * than decorative.
  *
- * The counters are interpolated against the finished run rather than summed
- * from events, because that is what the real gateway will do too: the batch
- * runner emits a progress frame with the running totals in it (PRD 7.3), and
- * this component's job is to draw the frame, not to keep the books.
+ * The counters come off the frame rather than being interpolated toward a
+ * finished report, which is the difference between watching a run and watching
+ * an animation of one: these are cases this batch has really closed and
+ * contacts it has really sent, at this moment. If the run stalls the numbers
+ * stop, instead of sliding smoothly to a total that was decided in advance.
+ *
+ * This component's job is to draw the frame, not to keep the books.
  */
 export function RunProgress({
   config,
   progress,
-  headline,
-  escalations,
-  stopped,
-  contacts,
-  script,
+  totals,
+  steps,
   onCancel,
 }: {
   config: SimulationConfig;
   /** 0 to 1. */
   progress: number;
-  headline: Headline;
-  escalations: number;
-  stopped: number;
-  contacts: number;
-  script: RunStep[];
+  /** The batch's own running totals, as the runner last reported them. */
+  totals: RunTotals;
+  /** The runner's narration so far, oldest first. */
+  steps: RunStep[];
   onCancel: () => void;
 }) {
   const done = Math.min(config.batchSize, Math.round(progress * config.batchSize));
-  const landed = script.filter((step) => step.at <= progress);
-  const feed = [...landed].reverse();
+  const feed = [...steps].reverse();
 
   return (
     <div className="space-y-3">
       <Section
         title="Running batch"
+        // Leaves the room; it does not kill the batch. A browser closing a
+        // socket has no business stopping a run half way through a case.
         action={
           <button type="button" className="btn-op-quiet" onClick={onCancel}>
-            Cancel run
+            Stop watching
           </button>
         }
       >
@@ -99,32 +100,27 @@ export function RunProgress({
       >
         <Counter
           label="Recovered so far"
-          value={
-            <MoneyValue
-              paise={Math.round(headline.recoveredPaise * progress)}
-              className="text-recovered"
-            />
-          }
-          support={`${Math.round(headline.recoveredCases * progress)} cases closed with the money`}
+          value={<MoneyValue paise={totals.recoveredPaise} className="text-recovered" />}
+          support={`${totals.recoveredCases} cases closed with the money`}
         />
         <Counter
           label="Contacts sent"
-          value={<span className="tabular">{Math.round(contacts * progress)}</span>}
+          value={<span className="tabular">{totals.contacts}</span>}
           support="every one of them through the gate first"
         />
         <Counter
           label="Escalated"
-          value={<span className="tabular">{Math.round(escalations * progress)}</span>}
+          value={<span className="tabular">{totals.escalations}</span>}
           support="handed to a human, agent standing down"
         />
         <Counter
           label="Closed by a rule"
-          value={<span className="tabular text-halted">{Math.round(stopped * progress)}</span>}
+          value={<span className="tabular text-halted">{totals.stopped}</span>}
           support="attempt cap, opt-out or sentiment halt"
         />
       </section>
 
-      <Section title="Runner" meta={`${landed.length} of ${script.length} stages`}>
+      <Section title="Runner" meta={`${steps.length} milestone${steps.length === 1 ? "" : "s"}`}>
         <ol className="min-h-[188px] divide-y divide-white/[0.04]">
           {feed.map((step, i) => {
             const hex = TONE_HEX[ACTOR_TONE[step.actor]];

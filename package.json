@@ -1,0 +1,14 @@
+{
+  "name": "tugboat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tugboat — AI revenue recovery agent (Razorpay AI Buildathon, Track 03). Backend in backend/, Control Tower in frontend/.",
+  "scripts": {
+    "demo": "node scripts/demo.mjs",
+    "check:decisions": "node scripts/check-decisions.mjs",
+    "evidence:pdf": "node scripts/evidence-pdf.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

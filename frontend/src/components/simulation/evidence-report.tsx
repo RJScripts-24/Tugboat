@@ -57,16 +57,22 @@ export type Report = {
  * comparison against a policy that tries harder comes next, and the list of
  * cases it could not recover comes last and in full.
  */
+/** The policy pack and build a report was produced by (`report.run` in the API's JSON). */
+export type Provenance = { policyVersion: string; codeVersion: string };
+
 export function EvidenceReport({
   config,
   report,
   executed,
+  provenance,
   runs,
 }: {
   config: SimulationConfig;
   report: Report;
   /** The configuration the run on screen was actually produced by. */
   executed: SimulationConfig;
+  /** What produced the run on screen, read off the report rather than typed here. */
+  provenance: Provenance;
   /** Run history including anything saved this session; falls back to the shipped list. */
   runs?: SavedRun[];
 }) {
@@ -82,7 +88,13 @@ export function EvidenceReport({
 
   return (
     <div className="space-y-3">
-      <HeadlineBand headline={headline} arms={report.arms} config={executed} drift={drift} />
+      <HeadlineBand
+        headline={headline}
+        arms={report.arms}
+        config={executed}
+        provenance={provenance}
+        drift={drift}
+      />
 
       <section aria-label="Report figures" className="grid grid-cols-2 xl:grid-cols-4">
         <Figure
@@ -149,21 +161,23 @@ function HeadlineBand({
   headline,
   arms,
   config,
+  provenance,
   drift,
 }: {
   headline: Headline;
   arms: ArmResult[];
   config: SimulationConfig;
+  provenance: Provenance;
   drift: boolean;
 }) {
   return (
     <section className="headline-band px-5 py-5 sm:px-6">
       <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
         <p className="chalk-hand text-[13px] uppercase tracking-[0.09em] text-txt-faint">
-          Evidence · seed {config.seed} · policy v4 · {headline.cases} cases
+          Evidence · seed {config.seed} · policy {provenance.policyVersion} · {headline.cases} cases
         </p>
         <p className="mono text-[11.5px] text-txt-faint">
-          tugboat@0.4.0 · rerun this seed and these numbers come back identical
+          {provenance.codeVersion} · rerun this seed and these numbers come back identical
         </p>
       </div>
 

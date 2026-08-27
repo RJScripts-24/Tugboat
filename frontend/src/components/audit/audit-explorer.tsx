@@ -17,11 +17,9 @@ import { preciseStampOf } from "@/lib/clock";
 import {
   ACTOR_META,
   ACTOR_ORDER,
-  summarise,
   type LedgerRow,
   type LedgerSummary,
 } from "@/lib/audit-data";
-import { useSessionEvents } from "@/lib/event-store";
 import { chainsOf, verifyChain } from "@/lib/ledger-verify";
 import { EMPTY_FILTERS, FilterBar, RANGES, type AuditFilters } from "./filter-bar";
 import { LedgerTable } from "./ledger-table";
@@ -41,16 +39,23 @@ const CHAINS_PER_FRAME = 5;
  * things a person can do here are narrow the list, look inside a row, copy a
  * digest, verify the chain, and follow a row back to the case it came from.
  *
- * The rows are not fetched. The whole ledger is rendered on the server from
- * `lib/audit-data` and filtered in the browser, because every filter here is a
- * question about a list that is already in memory - and the alternative, a
- * round trip per keystroke, makes the ledger feel heavier the more of it there
- * is. When `GET /audit` lands with real pagination this component keeps its
- * shape; only where `rows` comes from changes.
+ * The rows are not fetched here. A page of the ledger is read on the server
+ * from `GET /audit` and filtered in the browser, because every filter on this
+ * page is a question about a list that is already in memory - and the
+ * alternative, a round trip per keystroke, makes the ledger feel heavier the
+ * more of it there is. The endpoint takes the same filters for the day the
+ * ledger outgrows one page, and the header figures already come from a count
+ * over all of it rather than from the rows on screen.
+ *
+ * There is no longer a second list to merge in. Approvals and overrides used to
+ * be written in the browser and stitched into these rows, because otherwise a
+ * merchant could approve a discount and find no row for it on the page whose
+ * whole job is to have one. They are written by the API now, inside the
+ * transactions that earned them, so they arrive with everything else.
  */
 export function AuditExplorer({
-  rows: served,
-  summary: servedSummary,
+  rows,
+  summary,
   index,
   nowMs,
   initialCase,
@@ -58,39 +63,11 @@ export function AuditExplorer({
   rows: LedgerRow[];
   summary: LedgerSummary;
   index: Record<string, { label: string; cause: string; stage: string }>;
-  /** The batch clock's anchor - "now", for the purposes of a time window. */
+  /** The server's instant, so a "last hour" window is the same hour in both renders. */
   nowMs: number;
   /** `?case=C-1042`, so Case Detail and Approvals can point at their own rows. */
   initialCase: string | null;
 }) {
-  /*
-   * Server rows plus everything written this session, as one list.
-   *
-   * Approvals and overrides used to be invisible here - a merchant could
-   * approve a discount and find no row for it on the page whose whole job is
-   * to have one. Session events are chained and digested exactly like served
-   * rows, so they merge, sort, filter and verify without special-casing.
-   */
-  const session = useSessionEvents();
-  const rows = useMemo(
-    () =>
-      session.length === 0
-        ? served
-        : [...served, ...session].sort((a, b) =>
-            b.atMs === a.atMs
-              ? a.chain === b.chain
-                ? b.seq - a.seq
-                : a.chain.localeCompare(b.chain)
-              : b.atMs - a.atMs,
-          ),
-    [served, session],
-  );
-
-  const summary = useMemo(
-    () => (session.length === 0 ? servedSummary : summarise(rows)),
-    [session.length, servedSummary, rows],
-  );
-
   const [filters, setFilters] = useState<AuditFilters>(() =>
     initialCase ? { ...EMPTY_FILTERS, q: initialCase } : EMPTY_FILTERS,
   );

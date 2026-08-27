@@ -135,8 +135,19 @@ export class FakeLlmDriver implements LlmDriver {
     if (/\bstop\b|unsubscribe|band karo|बंद करो/.test(text)) {
       return { sentiment: "opt-out", score: -1, reasoning: "Opt-out keyword present." };
     }
-    if (/tight|can'?t afford|hardship|paisa nahi|no money|bahut messages/.test(text)) {
-      return { sentiment: "negative", score: -0.78, reasoning: "Hardship or annoyance expressed." };
+    if (/tight|can'?t afford|hardship|paisa nahi|no money|majboori|dikkat/.test(text)) {
+      return { sentiment: "negative", score: -0.78, reasoning: "Financial hardship expressed." };
+    }
+    // Anger, kept apart from hardship. Both are negative and they lead to
+    // different places: hardship escalates to a person, hostility halts the
+    // case. A classifier that could only see the first left the
+    // negative-sentiment stopping rule unreachable on every batch.
+    if (
+      /harassment|stop chasing|fed up|not paying|bahut messages|pareshaan|mat karo|baar baar/.test(
+        text,
+      )
+    ) {
+      return { sentiment: "negative", score: -0.84, reasoning: "Hostility toward being chased." };
     }
     if (/paid|kar diya|done|paying now|bhej diya/.test(text)) {
       return { sentiment: "positive", score: 0.71, reasoning: "Customer indicates payment." };

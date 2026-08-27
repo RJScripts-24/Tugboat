@@ -3,7 +3,7 @@ import { Test } from "@nestjs/testing";
 import { PrismaService } from "../prisma/prisma.service";
 import { FakeLlmDriver } from "./fake-llm.driver";
 import { LLM_DRIVER } from "./llm-driver.interface";
-import { LlmSchemaError, LlmService } from "./llm.service";
+import { LlmFailure, LlmSchemaError, LlmUnavailableError, LlmService } from "./llm.service";
 import { diagnosisSchema, extractJson } from "./schemas";
 
 describe("extractJson", () => {
@@ -104,6 +104,29 @@ describe("LlmService", () => {
 
     await expect(service.structured(request, diagnosisSchema)).rejects.toThrow(LlmSchemaError);
     expect(calls).toHaveLength(2);
+  });
+
+  it("reports a provider that did not answer as unavailable, without a repair attempt or a bill", async () => {
+    driver.setOverride("diagnosis", () => {
+      throw new Error("Gemini 503: The model is overloaded. Please try again later.");
+    });
+
+    const failure = service.structured(request, diagnosisSchema);
+
+    await expect(failure).rejects.toThrow(LlmUnavailableError);
+    await expect(failure).rejects.toThrow(/could not be reached for diagnosis/);
+    expect(await failure.catch((error: unknown) => error instanceof LlmFailure)).toBe(true);
+    // No tokens were consumed, so nothing is metered.
+    expect(calls).toHaveLength(0);
+  });
+
+  it("classes a schema failure and an outage as the same kind of failure for callers", () => {
+    const schema = new LlmSchemaError("sentiment", "root: expected object", "prose");
+    const outage = new LlmUnavailableError("sentiment", new Error("fetch failed"));
+
+    expect(schema).toBeInstanceOf(LlmFailure);
+    expect(outage).toBeInstanceOf(LlmFailure);
+    expect(outage.purpose).toBe("sentiment");
   });
 
   it("rejects a root cause outside the vocabulary", async () => {

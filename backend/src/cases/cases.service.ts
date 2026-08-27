@@ -6,6 +6,7 @@ import { toCaseRef } from "../common/case-ref";
 import { maskEmail, maskPhone } from "../common/mask";
 import type { NormalizedEvent } from "../ingestion/normalized-event";
 import { PrismaService } from "../prisma/prisma.service";
+import { narratedCases } from "./narrated";
 import {
   CaseEventsService,
   withSeqRetry,
@@ -64,7 +65,7 @@ export class CasesService {
     const customer = await this.resolveCustomer(merchantId, event);
 
     return this.withSeqRetry(() =>
-      this.prisma.$transaction(async (tx) => {
+      this.prisma.transaction(async (tx) => {
         const record = await tx.case.create({
           data: {
             merchantId,
@@ -85,6 +86,8 @@ export class CasesService {
             instrument: event.instrument,
             deadlineAt: event.deadlineAt,
             createdAt: event.occurredAt,
+            simRunId: event.simRunId,
+            simArm: event.simRunId ? "tugboat" : undefined,
           },
         });
 
@@ -121,7 +124,7 @@ export class CasesService {
     data: Prisma.CaseUpdateInput = {},
   ): Promise<CaseWithCustomer> {
     return this.withSeqRetry(() =>
-      this.prisma.$transaction(async (tx) => {
+      this.prisma.transaction(async (tx) => {
         const current = await tx.case.findUnique({ where: { id: caseId } });
         if (!current) {
           throw new NotFoundException({ error: `Case ${caseId} not found.` });
@@ -133,6 +136,47 @@ export class CasesService {
         await this.events.append(tx, { ...event, caseId });
 
         return tx.case.findUniqueOrThrow({ where: { id: caseId }, include: CASE_INCLUDE });
+      }),
+    );
+  }
+
+  /**
+   * Records what happened, moving the case only if it is not already there.
+   *
+   * A send that leaves a case waiting is the ordinary outcome, and the case is
+   * usually somewhere else when it happens — but not always. An approved action
+   * whose release was deferred by quiet hours has already been parked in
+   * `waiting`, so when the release finally goes through, the honest description
+   * of the result is "still waiting" and `transition` would refuse it as an
+   * illegal move to itself. Refusing there loses the send from the timeline and
+   * the spend from the case, which is the opposite of what the state machine is
+   * protecting (B-34).
+   *
+   * Deliberately not a change to `transition`. A stage moving to itself is a
+   * bug almost everywhere else, and it should keep throwing there.
+   */
+  async settle(
+    caseId: number,
+    to: CaseStage,
+    event: Omit<AppendEventInput, "caseId">,
+    data: Prisma.CaseUpdateInput = {},
+  ): Promise<void> {
+    const current = await this.prisma.case.findUnique({
+      where: { id: caseId },
+      select: { stage: true },
+    });
+
+    if (!current) throw new NotFoundException({ error: `Case ${caseId} not found.` });
+
+    if (current.stage !== to) {
+      await this.transition(caseId, to, event, data);
+      return;
+    }
+
+    await this.withSeqRetry(() =>
+      this.prisma.transaction(async (tx) => {
+        await tx.case.update({ where: { id: caseId }, data });
+        await this.events.append(tx, { ...event, caseId });
       }),
     );
   }
@@ -160,13 +204,14 @@ export class CasesService {
   /** Appends an event that explains no stage change of its own. */
   async appendEvent(caseId: number, event: Omit<AppendEventInput, "caseId">): Promise<void> {
     await this.withSeqRetry(() =>
-      this.prisma.$transaction((tx) => this.events.append(tx, { ...event, caseId })),
+      this.prisma.transaction((tx) => this.events.append(tx, { ...event, caseId })),
     );
   }
 
   async list(merchantId: string, filters: CaseFilters = {}) {
     const where: Prisma.CaseWhereInput = {
-      merchantId,
+      // Live cases and the promoted batch — never a run still in the Lab (D-120).
+      ...narratedCases(merchantId),
       ...(filters.stage?.length ? { stage: { in: filters.stage } } : {}),
       ...(filters.type?.length ? { type: { in: filters.type } } : {}),
       ...(filters.rootCause?.length
@@ -177,9 +222,15 @@ export class CasesService {
         : {}),
       ...(filters.search
         ? {
-            OR: [
-              { customer: { name: { contains: filters.search, mode: "insensitive" } } },
-              { originId: { contains: filters.search, mode: "insensitive" } },
+            // Under AND, because the narrated clause above is itself an OR and a
+            // second top-level OR would replace it rather than combine with it.
+            AND: [
+              {
+                OR: [
+                  { customer: { name: { contains: filters.search, mode: "insensitive" } } },
+                  { originId: { contains: filters.search, mode: "insensitive" } },
+                ],
+              },
             ],
           }
         : {}),
@@ -217,16 +268,44 @@ export class CasesService {
     return record;
   }
 
+  /**
+   * What thinking about this case has cost.
+   *
+   * Read from `llm_calls` rather than counted on the case, because the same
+   * rule applies here as to every other figure in this product: a number kept
+   * beside the rows it summarises is a number that eventually disagrees with
+   * them. Zero calls is the ordinary answer — four cases in five are diagnosed
+   * by the rules table and never reach a model (ADR-5), and the outcome card
+   * saying so is the architecture arguing for itself.
+   */
+  async inferenceSpend(caseId: number): Promise<{ calls: number; tokens: number }> {
+    const spend = await this.prisma.llmCall.aggregate({
+      where: { caseId },
+      _count: { _all: true },
+      _sum: { tokensIn: true, tokensOut: true },
+    });
+
+    return {
+      calls: spend._count._all,
+      tokens: (spend._sum.tokensIn ?? 0) + (spend._sum.tokensOut ?? 0),
+    };
+  }
+
+  /** How many cases the Tower is narrating, for the walk control's "of 214". */
+  count(merchantId: string): Promise<number> {
+    return this.prisma.case.count({ where: narratedCases(merchantId) });
+  }
+
   /** Neighbouring case ids, for the prev/next control on Case Detail. */
   async neighbours(merchantId: string, caseId: number) {
     const [prev, next] = await Promise.all([
       this.prisma.case.findFirst({
-        where: { merchantId, id: { lt: caseId } },
+        where: { ...narratedCases(merchantId), id: { lt: caseId } },
         orderBy: { id: "desc" },
         select: { id: true },
       }),
       this.prisma.case.findFirst({
-        where: { merchantId, id: { gt: caseId } },
+        where: { ...narratedCases(merchantId), id: { gt: caseId } },
         orderBy: { id: "asc" },
         select: { id: true },
       }),

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 
 import { ChalkRule } from "@/components/dashboard/chalk";
 import { CheckIcon, CloseIcon, EscalateIcon } from "@/components/dashboard/icons";
@@ -11,17 +12,14 @@ import {
   type ApprovalRequest,
   type ApprovalStats,
 } from "@/lib/approvals-data";
-import { setPendingApprovals } from "@/lib/approvals-live";
-import type { ChainTip } from "@/lib/audit-data";
-import { appendEvent } from "@/lib/event-store";
+import { approveRequest, rejectRequest } from "@/lib/actions";
 import { formatLatency, formatSpan } from "@/lib/clock";
 import { DEMO_MERCHANT } from "@/lib/demo-merchant";
 import { formatPercent } from "@/lib/money";
+import { useLiveRefresh } from "@/lib/live";
+import type { Concern } from "@/lib/socket";
 import { HistoryTable, type HistoryRow } from "./history-table";
 import { RequestCard, type SessionDecision } from "./request-card";
-
-/** How long into the demo the queued escalation lands. */
-const ARRIVAL_MS = 9_200;
 
 /** How long a receipt stays on screen. */
 const TOAST_MS = 6_000;
@@ -35,6 +33,9 @@ type Toast = {
 
 type SortKey = "value" | "waiting";
 
+/** The queue moves on its own room; a decision also moves the shell badge. */
+const APPROVAL_CONCERNS: Concern[] = ["approvals"];
+
 /**
  * Approvals Queue (PRD 6.3, page 5) - compliant escalation, made visible.
  *
@@ -44,32 +45,44 @@ type SortKey = "value" | "waiting";
  * money it is holding, the rule that stopped it, and the exact message that
  * would go out if you say yes.
  *
- * Decisions are held in this component rather than posted anywhere: the
- * backend's `POST /approvals/:id/approve|reject` does not exist yet, and the
- * shape of what happens after a click - gate re-run, action executed, case
- * resumed, ledger row written - is the part worth getting right first. When
- * the endpoint lands, the handlers below become the only thing that changes.
+ * Decisions go to `POST /approvals/:id/approve|reject` and nothing about them
+ * is decided here. That is the Stage 9 change worth reading: this component
+ * used to hold the decision itself and write a ledger row for it in the
+ * browser, because there was nothing else to hold it. Approving is now a
+ * *permission* rather than a send — the gate runs again on the release, and a
+ * customer who opted out in the meantime still halts a message a merchant
+ * already said yes to (D-67). So the toast says "released", not "sent", because
+ * that is what actually happened.
+ *
+ * The receipt on the card is optimistic and the row underneath it is not: the
+ * action revalidates this page, so within a moment the History tab is showing
+ * the decision as the API recorded it rather than as this component described
+ * it.
  */
 export function ApprovalsView({
   pending,
   history,
-  live,
   stats,
-  tips,
 }: {
   pending: ApprovalRequest[];
   history: ApprovalHistoryRow[];
-  /** The escalation that lands mid-demo, or null if its case is not in the batch. */
-  live: ApprovalRequest | null;
   stats: ApprovalStats;
-  /** Where each case's ledger chain ends, so a decision can be appended to it. */
-  tips: Record<string, ChainTip>;
 }) {
+  const router = useRouter();
+  const [busy, startTransition] = useTransition();
+
+  // A case escalating while you watch: `approval.pending` arrives on the
+  // approvals room and the page re-reads the queue. The seeded version of this
+  // was a `setTimeout` that revealed one hand-picked request nine seconds in.
+  useLiveRefresh(
+    useCallback(() => router.refresh(), [router]),
+    APPROVAL_CONCERNS,
+  );
+
   const [tab, setTab] = useState<"pending" | "history">("pending");
   const [sort, setSort] = useState<SortKey>("value");
   const [decisions, setDecisions] = useState<Record<string, SessionDecision>>({});
   const [edits, setEdits] = useState<Record<string, string[]>>({});
-  const [arrived, setArrived] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextToast = useRef(0);
 
@@ -79,40 +92,30 @@ export function ApprovalsView({
     setTimeout(() => setToasts((current) => current.filter((row) => row.id !== id)), TOAST_MS);
   }, []);
 
-  /**
-   * A case escalating while you watch. Stands in for `approval.pending` on the
-   * socket: the same case the Control Tower's feed escalates, so the badge
-   * ticking up here is the event a panelist just saw over there.
-   */
-  useEffect(() => {
-    if (!live) return;
-    const timer = setTimeout(() => {
-      setArrived(true);
-      pushToast({
-        title: `New request · ${live.caseId}`,
-        detail: "Hardship language detected — Boa stood down and is holding the case",
-        tone: "waiting",
-      });
-    }, ARRIVAL_MS);
-    return () => clearTimeout(timer);
-  }, [live, pushToast]);
-
   const requests = useMemo(() => {
-    const rows = arrived && live ? [live, ...pending] : pending;
-    return [...rows].sort((a, b) =>
+    return [...pending].sort((a, b) =>
       sort === "value"
         ? b.atRiskPaise - a.atRiskPaise
         : b.requestedMinutesAgo - a.requestedMinutesAgo,
     );
-  }, [arrived, live, pending, sort]);
+  }, [pending, sort]);
 
   const open = requests.filter((request) => !decisions[request.id]);
 
-  // The shell's badge is this number, so it is published rather than guessed.
-  useEffect(() => {
-    setPendingApprovals(open.length);
-  }, [open.length]);
-
+  /**
+   * Answer one request.
+   *
+   * The receipt on the card is written immediately and the truth arrives a
+   * moment later: the server action revalidates this page, so the History tab
+   * ends up showing the decision as the API recorded it — with the latency it
+   * actually measured — rather than as this component described it.
+   *
+   * The approval toast says "released", not "sent". That is not hedging: the
+   * gate runs again when the release job fires, and it can still defer the
+   * message into tomorrow morning or refuse it outright if the customer opted
+   * out while the request was waiting (D-67). A toast claiming the message went
+   * would be the one sentence on this page that the product cannot back up.
+   */
   const decide = useCallback(
     (
       request: ApprovalRequest,
@@ -125,7 +128,7 @@ export function ApprovalsView({
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
-        hour12: false,
+        hourCycle: "h23",
       }).format(new Date());
 
       setDecisions((current) => ({
@@ -133,55 +136,52 @@ export function ApprovalsView({
         [request.id]: { verdict, reason, at, edited },
       }));
 
-      /*
-       * The decision goes on the ledger, not only into this component.
-       *
-       * It used to live in `decisions` alone, which meant a merchant could
-       * approve a discount and find no trace of it in the Audit Explorer -
-       * the one page whose entire purpose is to have a trace of it. Appending
-       * here puts the row on the case's own chain, where Case Detail and the
-       * Audit Explorer both read it.
-       */
-      appendEvent({
-        chain: request.caseId,
-        caseId: request.caseId,
-        actor: "HUMAN",
-        action: "APPROVAL_DECIDED",
-        detail:
+      startTransition(async () => {
+        const result =
           verdict === "approved"
-            ? `Approved · ${request.headline}`
-            : `Rejected · ${reason ?? "no reason given"}`,
-        tip: tips[request.caseId],
-        payload: {
-          case_id: request.caseId,
-          gate: request.gate,
-          decision: verdict === "approved" ? "APPROVED" : "REJECTED",
-          decided_by: DEMO_MERCHANT.displayName,
-          reason,
-          draft_edited: edited,
-          concession_paise: verdict === "approved" ? request.concessionPaise : 0,
-          attempt: request.attempts,
-          attempt_cap: request.attemptCap,
-        },
-      });
+            ? await approveRequest(request.id, {
+                // The edited body, when the approver rewrote it. The API
+                // restores the opt-out line if the edit removed it, rather than
+                // refusing the edit (D-68).
+                lines: edited ? edits[request.id] : undefined,
+                subject: request.draft.subject,
+              })
+            : await rejectRequest(request.id, reason ?? "No reason given");
 
-      pushToast(
-        verdict === "approved"
-          ? {
-              title: `Approved · ${request.caseId}`,
-              detail: `${request.resumeSteps[1]?.label ?? "Action executed"} — the case resumed at attempt ${
-                request.attempts + 1
-              } of ${request.attemptCap}`,
-              tone: "plain",
-            }
-          : {
-              title: `Rejected · ${request.caseId}`,
-              detail: `${reason} — Boa stays stood down and the reason is on the ledger`,
-              tone: "halted",
-            },
-      );
+        if (!result.ok) {
+          // The card goes back to undecided: a receipt for something that did
+          // not happen is worse than no receipt.
+          setDecisions((current) => {
+            const next = { ...current };
+            delete next[request.id];
+            return next;
+          });
+
+          pushToast({
+            title: `Could not record the decision on ${request.caseId}`,
+            detail: result.error,
+            tone: "halted",
+          });
+          return;
+        }
+
+        pushToast(
+          verdict === "approved"
+            ? {
+                title: `Approved \u00b7 ${request.caseId}`,
+                detail:
+                  "Released to the executor \u2014 the gate re-runs before anything is sent, and the decision is on the case's ledger chain",
+                tone: "plain",
+              }
+            : {
+                title: `Rejected \u00b7 ${request.caseId}`,
+                detail: `${reason} \u2014 Boa stays stood down and the reason is on the ledger`,
+                tone: "halted",
+              },
+        );
+      });
     },
-    [pushToast, tips],
+    [edits, pushToast],
   );
 
   /** Session decisions, shaped as history rows so one table renders both. */
@@ -344,7 +344,10 @@ export function ApprovalsView({
               <li key={request.id}>
                 <RequestCard
                   request={request}
-                  live={live?.id === request.id && arrived}
+                  busy={busy}
+                  // Highlights a request that arrived in the last minute:
+                  // whatever escalated while somebody was looking at the page.
+                  live={request.requestedMinutesAgo < 1}
                   decision={decisions[request.id] ?? null}
                   draftLines={edits[request.id] ?? request.draft.lines}
                   onApprove={(edited) => decide(request, "approved", null, edited)}

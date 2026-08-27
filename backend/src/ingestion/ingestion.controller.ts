@@ -15,9 +15,15 @@ import { Public } from "../auth/public.decorator";
 import { AppConfigService } from "../config/app-config.service";
 import { InboundService, type InboundOutcome } from "../conversation/inbound.service";
 import { SimEventDto } from "./dto/sim-event.dto";
+import { SimPaymentDto } from "./dto/sim-payment.dto";
 import { SimReplyDto } from "./dto/sim-reply.dto";
 import { IngestionService, type IngestOutcome } from "./ingestion.service";
-import { isSuccessEvent, normalizeRazorpayWebhook, razorpayEventId } from "./razorpay.mapper";
+import {
+  isSuccessEvent,
+  normalizeRazorpayWebhook,
+  paymentArrivalOf,
+  razorpayEventId,
+} from "./razorpay.mapper";
 import { verifyRazorpaySignature } from "./razorpay.signature";
 
 /** Razorpay keys the payload by entity name; which key is present depends on the event. */
@@ -71,6 +77,10 @@ export class IngestionController {
     // A successful payment opens no case, but the detector counts it: without
     // successes there is no denominator, and a failure rate cannot be computed.
     if (isSuccessEvent(eventType)) {
+      // A success that names one of our cases is the money coming back.
+      const arrival = paymentArrivalOf(body, eventId);
+      if (arrival) return this.ingestion.recordPayment({ ...arrival, source: "razorpay" });
+
       const entity = firstEntity(body);
       return this.ingestion.recordSuccess({
         eventId,
@@ -120,6 +130,28 @@ export class IngestionController {
       channel: dto.channel,
       text: dto.text,
       at: dto.occurredAt ? new Date(dto.occurredAt) : undefined,
+    });
+  }
+
+  /**
+   * The customer paid.
+   *
+   * Stage 10 points the real `payment.captured` webhook at the same service
+   * method, so a recovery credited in the evidence report was recorded by the
+   * code that will record a live one.
+   */
+  @Post("sim/payments")
+  @HttpCode(202)
+  paid(@Body() dto: SimPaymentDto): Promise<IngestOutcome> {
+    return this.ingestion.recordPayment({
+      eventId: dto.eventId ?? `simpay_${dto.reference}`,
+      caseId: dto.caseId,
+      originId: dto.originId,
+      amountPaise: dto.amountPaise,
+      reference: dto.reference,
+      via: dto.via,
+      at: dto.occurredAt ? new Date(dto.occurredAt) : undefined,
+      raw: dto,
     });
   }
 }

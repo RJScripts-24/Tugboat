@@ -1,20 +1,7 @@
 import type { Metadata } from "next";
 
 import { SimulationLab } from "@/components/simulation/simulation-lab";
-import { getChainTip } from "@/lib/audit-data";
-import {
-  getArmResults,
-  getCompliance,
-  getDefaultConfig,
-  getEscalationSummary,
-  getExceptions,
-  getGrading,
-  getHeadline,
-  getRecoveryByType,
-  getRuleFirings,
-  getRunHistory,
-  getRunScript,
-} from "@/lib/simulation-data";
+import { getDefaultConfig, getLatestReport, getRunHistory } from "@/lib/queries";
 
 export const metadata: Metadata = {
   title: "Simulation Lab — Tugboat",
@@ -22,31 +9,29 @@ export const metadata: Metadata = {
 };
 
 /**
- * Simulation Lab (PRD 6.3, page 6) - the evidence page.
+ * Simulation Lab (PRD 6.3, page 6) — the evidence page.
  *
- * The whole report is assembled on the server from `lib/simulation-data`,
- * shaped exactly like `GET /simulations/:id/report` (PRD 7.5), so this page
- * does not change when the batch runner arrives. Nothing is fetched in the
- * browser and nothing is computed twice: the client component replays a run
- * whose numbers were already settled here.
+ * The report is read whole from `GET /simulations/:id/report` and handed down:
+ * one object, the same one `docs/evidence/` ships as a file, so the screen and
+ * the download cannot disagree. Which run it is matters — the promoted one,
+ * because that is the batch the rest of the Control Tower is narrating, and an
+ * evidence page describing a different 214 cases than the dashboard would be
+ * the most expensive kind of demo bug.
+ *
+ * The run itself is no longer a replay. `POST /simulations` starts a real
+ * batch, the runner narrates itself over the `sim:<runId>` socket room, and the
+ * counters beside the bar are cases this batch has actually closed. That is
+ * also why it takes minutes rather than the eight and a half seconds the
+ * seeded animation took: it is doing the work.
  */
-export default function SimulationPage() {
+export default async function SimulationPage() {
+  const [latest, runs] = await Promise.all([getLatestReport(), getRunHistory()]);
+
   return (
     <SimulationLab
-      defaultConfig={getDefaultConfig()}
-      script={getRunScript()}
-      tip={getChainTip("policy")}
-      report={{
-        headline: getHeadline(),
-        arms: getArmResults(),
-        byType: getRecoveryByType(),
-        grading: getGrading(),
-        rules: getRuleFirings(),
-        compliance: getCompliance(),
-        escalations: getEscalationSummary(),
-        exceptions: getExceptions(),
-        runs: getRunHistory(),
-      }}
+      defaultConfig={getDefaultConfig(latest?.run, latest?.report)}
+      report={latest?.report ?? null}
+      runs={runs}
     />
   );
 }

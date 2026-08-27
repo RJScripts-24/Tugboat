@@ -25,7 +25,42 @@ export type CopyContext = {
   merchantName: string;
   hinglish: boolean;
   attempt: number;
+  /** A real payment link, when a real lane issued one; the derived `rzp.io` link otherwise. */
+  link?: string;
 };
+
+/**
+ * Puts a real link where a draft carried the derived one.
+ *
+ * An approver saw and signed off a draft composed at gate time, when the only
+ * link that existed was the deterministic `rzp.io/l/tug-…`. A real lane
+ * issues the case's actual link at send time, and the one edit it is allowed
+ * to make to an approved body is that substitution — every other word is the
+ * approver's (D-68).
+ */
+export function withLink(lines: string[], url: string): string[] {
+  return lines.map((line) => line.replace(/rzp\.io\/l\/tug-[0-9a-f]{6}/g, url));
+}
+
+/**
+ * Guarantees the body carries the link somewhere the customer can click.
+ *
+ * The email copy has never printed its link inline: the timeline renders it
+ * as its own field beside the message, and the simulated lane needs nothing
+ * more. A real email does — a customer cannot click a field on somebody
+ * else's dashboard — so the sending adapter adds one line, above the way out,
+ * unless a line already carries the link.
+ */
+export function withLinkLine(lines: string[], url: string): string[] {
+  if (lines.some((line) => line.includes(url))) return lines;
+
+  const linkLine = `Pay securely here: ${url}`;
+  // Above the way out, and above a sign-off ("— Boa, on behalf of …") when
+  // there is one, so the link sits with the sentence that points at it.
+  const before = lines.findIndex((line) => line === OPT_OUT_LINE || line.startsWith("— "));
+  if (before === -1) return [...lines, linkLine];
+  return [...lines.slice(0, before), linkLine, ...lines.slice(before)];
+}
 
 export type EmailCopy = { subject: string; lines: string[] };
 
@@ -39,7 +74,7 @@ function firstName(name: string): string {
 export function whatsappCopy(ctx: CopyContext): string[] {
   const amount = `₹${inr(ctx.amountPaise)}`;
   const who = firstName(ctx.customerName);
-  const link = payLink(ctx.caseId);
+  const link = ctx.link ?? payLink(ctx.caseId);
 
   if (ctx.hinglish) {
     switch (ctx.rootCause) {
@@ -193,7 +228,7 @@ export function discountCopy(ctx: CopyContext, discountPercent: number): string[
   const net = `₹${inr(ctx.amountPaise - concession)}`;
   const gross = `₹${inr(ctx.amountPaise)}`;
   const who = firstName(ctx.customerName);
-  const link = payLink(ctx.caseId);
+  const link = ctx.link ?? payLink(ctx.caseId);
 
   if (ctx.hinglish) {
     return [

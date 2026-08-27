@@ -18,6 +18,9 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // Playwright helpers run under plain node (`node scripts/shot.js`), so they
+      // are CommonJS by necessity and not part of the app the rules describe.
+      "scripts/**",
     ],
   },
 ];

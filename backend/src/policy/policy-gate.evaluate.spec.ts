@@ -38,11 +38,13 @@ function subject(overrides: Partial<GateSubject> = {}): GateSubject {
     caseId: 1001,
     type: "PAYMENT_FAILED",
     amountPaise: 4_800 * RUPEE,
+    clearedGates: [],
     attemptsUsed: 0,
     deadlineAt: new Date("2026-09-30T00:00:00.000Z"),
     diagnosisConfidence: 0.96,
     segment: "B2C",
     optedOutAt: null,
+    pausedAt: null,
     lastSentiment: null,
     lastSentimentScore: null,
     hardshipFlaggedAt: null,
@@ -85,6 +87,7 @@ describe("PolicyGate — the clean path", () => {
       "Channel cap",
       "Cool-down",
       "Opt-out",
+      "Human override",
       "Sentiment halt",
       "Escalation gate",
       "Channel enabled",
@@ -98,9 +101,37 @@ describe("PolicyGate — the clean path", () => {
     // full list, and "blocked at the first no" would hide the other bounds.
     const result = run(subject({ optedOutAt: new Date(), attemptsUsed: 9 }), action());
 
-    expect(result.checks).toHaveLength(9);
+    expect(result.checks).toHaveLength(10);
     expect(find(result.checks, "Opt-out").verdict).toBe("block");
     expect(find(result.checks, "Attempt cap").verdict).toBe("block");
+  });
+});
+
+describe("PolicyGate — the manual pause", () => {
+  it("refuses every action while a merchant is holding the case", () => {
+    const result = run(subject({ pausedAt: new Date() }), action());
+
+    expect(result.verdict).toBe("blocked");
+    expect(result.outcome.kind).toBe("refuse");
+    // A refusal, not a halt: the case keeps its stage and a resume undoes it.
+    expect(result.terminalStage).toBeNull();
+    expect(find(result.checks, "Human override").verdict).toBe("block");
+  });
+
+  it("lets the customer's own STOP be the reason a paused case is blocked", () => {
+    // Both are true; the timeline should say the opt-out stopped this, because
+    // that is the one a merchant cannot take back.
+    const result = run(subject({ pausedAt: new Date(), optedOutAt: new Date() }), action());
+
+    expect(result.outcome.kind).toBe("halt");
+    expect(result.terminalStage).toBe("halted");
+  });
+
+  it("gets out of the way as soon as the case is resumed", () => {
+    const result = run(subject({ pausedAt: null }), action());
+
+    expect(result.verdict).toBe("allowed");
+    expect(find(result.checks, "Human override").verdict).toBe("pass");
   });
 });
 
@@ -327,6 +358,76 @@ describe("PolicyGate — escalation gates", () => {
 
     expect(result.verdict).toBe("needs_approval");
     expect(result.gate).toBe("confidence_below_threshold");
+  });
+
+  describe("a routing question is asked once per case, not once per rung", () => {
+    it("stops asking whether a B2B account may be worked once a human said yes", () => {
+      const cleared = run(
+        subject({ segment: "B2B", clearedGates: ["b2b_high_value"] }),
+        action(),
+      );
+
+      // Re-asking on the next rung is asking the same person the same question
+      // four times, and every extra ask is another chance for the case to be
+      // closed by a no it had already survived.
+      expect(cleared.verdict).toBe("allowed");
+      expect(cleared.checks.find((check) => check.name === "Escalation gate")).toMatchObject({
+        verdict: "skip",
+      });
+    });
+
+    it("stops asking about a weak diagnosis once a human has acted on it", () => {
+      const cleared = run(
+        subject({ diagnosisConfidence: 0.42, clearedGates: ["confidence_below_threshold"] }),
+        action(),
+      );
+
+      expect(cleared.verdict).toBe("allowed");
+    });
+
+    it("still asks about every discount, however many were granted before", () => {
+      // A concession is about a specific amount being given away. "Yes to 10%
+      // last Tuesday" is not consent to the next one.
+      const result = run(
+        subject({ clearedGates: ["b2b_high_value", "confidence_below_threshold"] }),
+        action({ concessionPaise: 48_000, discountPercent: 10 }),
+      );
+
+      expect(result.verdict).toBe("needs_approval");
+      expect(result.gate).toBe("discount_requires_approval");
+    });
+
+    it("still stands down on hardship, whatever was cleared before", () => {
+      const result = run(
+        subject({
+          hardshipFlaggedAt: new Date("2026-08-20T00:00:00.000Z"),
+          clearedGates: ["b2b_high_value", "confidence_below_threshold"],
+        }),
+        action(),
+      );
+
+      expect(result.gate).toBe("hardship_language");
+    });
+
+    it("lifts no bound that protects a person", () => {
+      // The clearance answers a routing question. It is not a key to the
+      // quiet window, the caps, the cool-down or the opt-out.
+      const quiet = run(
+        subject({ segment: "B2B", clearedGates: ["b2b_high_value"] }),
+        action({ at: NIGHT }),
+      );
+      expect(quiet.outcome).toMatchObject({ kind: "defer" });
+
+      const optedOut = run(
+        subject({
+          segment: "B2B",
+          clearedGates: ["b2b_high_value"],
+          optedOutAt: new Date("2026-08-20T00:00:00.000Z"),
+        }),
+        action(),
+      );
+      expect(optedOut.outcome).toMatchObject({ kind: "halt" });
+    });
   });
 
   it("escalates hardship language, ahead of any other gate that also fires", () => {

@@ -1,4 +1,10 @@
-import { caseTypeForEvent, normalizeRazorpayWebhook, razorpayEventId } from "./razorpay.mapper";
+import {
+  caseTypeForEvent,
+  isSuccessEvent,
+  normalizeRazorpayWebhook,
+  paymentArrivalOf,
+  razorpayEventId,
+} from "./razorpay.mapper";
 
 const PAYMENT_FAILED = {
   event: "payment.failed",
@@ -130,5 +136,84 @@ describe("razorpay mapper", () => {
         origin: { id: "inv_1", reference: "INV-7", kind: "Razorpay invoice" },
       });
     });
+  });
+});
+
+describe("a paid link is a recovery (Stage 10)", () => {
+  const PAID_LINK = {
+    event: "payment_link.paid",
+    created_at: 1_756_000_500,
+    payload: {
+      payment_link: {
+        entity: { id: "plink_1", reference_id: "C-1042", amount: 480_000, amount_paid: 480_000, notes: { tugboat_case: "C-1042" } },
+      },
+      payment: { entity: { id: "pay_realabc", amount: 480_000, notes: { tugboat_case: "C-1042" } } },
+    },
+  };
+
+  it("treats payment_link.paid as a success event", () => {
+    expect(isSuccessEvent("payment_link.paid")).toBe(true);
+    expect(isSuccessEvent("payment.captured")).toBe(true);
+  });
+
+  it("maps a paid link to the case its notes name, with the payment id as the reference", () => {
+    expect(paymentArrivalOf(PAID_LINK, "evt_1")).toMatchObject({
+      eventId: "evt_1",
+      caseId: 1042,
+      amountPaise: 480_000,
+      reference: "pay_realabc",
+      via: "Paid from the payment link · Razorpay",
+    });
+  });
+
+  it("maps a bare payment.captured whose notes name a case", () => {
+    const captured = {
+      event: "payment.captured",
+      payload: { payment: { entity: { id: "pay_x", amount: 100, notes: { tugboat_case: "C-7" } } } },
+    };
+    expect(paymentArrivalOf(captured, "evt_2")).toMatchObject({ caseId: 7, reference: "pay_x", amountPaise: 100 });
+  });
+
+  it("records an unrelated success as a sample only — no case, no recovery", () => {
+    const unrelated = {
+      event: "payment.captured",
+      payload: { payment: { entity: { id: "pay_y", amount: 100, notes: {} } } },
+    };
+    expect(paymentArrivalOf(unrelated, "evt_3")).toBeNull();
+  });
+
+  it("does not trust a note that merely looks like a reference", () => {
+    const forged = {
+      event: "payment.captured",
+      payload: { payment: { entity: { id: "pay_z", amount: 100, notes: { tugboat_case: "C-1 OR 1=1" } } } },
+    };
+    expect(paymentArrivalOf(forged, "evt_4")).toBeNull();
+  });
+});
+
+describe("a signed event with no readable amount (Stage 11, B-56)", () => {
+  const event = (entity: Record<string, unknown>) => ({
+    event: "payment.failed",
+    created_at: 1_700_000_000,
+    payload: { payment: { entity: { id: "pay_noamount", ...entity } } },
+  });
+
+  it("opens no case when the amount is not a number", () => {
+    expect(normalizeRazorpayWebhook(event({ amount: "lots" }), "evt_1")).toBeNull();
+  });
+
+  it("opens no case at zero", () => {
+    expect(normalizeRazorpayWebhook(event({ amount: 0 }), "evt_2")).toBeNull();
+  });
+
+  it("still opens a case for a positive amount with garbage beside it", () => {
+    const normalized = normalizeRazorpayWebhook(
+      event({ amount: 129900, currency: 7, notes: "nope", email: "probe@example.invalid" }),
+      "evt_3",
+    );
+
+    expect(normalized?.amountPaise).toBe(129900);
+    expect(normalized?.currency).toBe("INR");
+    expect(normalized?.customer.email).toBe("probe@example.invalid");
   });
 });

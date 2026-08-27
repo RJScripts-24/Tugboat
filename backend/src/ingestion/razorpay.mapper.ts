@@ -28,7 +28,57 @@ const EVENT_TO_CASE_TYPE: Record<string, CaseType> = {
 const SUCCESS_EVENTS = new Set(["payment.captured", "order.paid", "subscription.charged"]);
 
 export function isSuccessEvent(event: string): boolean {
-  return SUCCESS_EVENTS.has(event);
+  return SUCCESS_EVENTS.has(event) || event === "payment_link.paid";
+}
+
+/**
+ * A success that names one of our cases is a recovery, not just a sample.
+ *
+ * Every link the real lane issues carries `notes.tugboat_case` and a
+ * `reference_id` of the case reference (D-123), and Razorpay echoes both back
+ * on `payment_link.paid` and on the `payment.captured` behind it. Either is
+ * enough; a success that names no case is recorded as a sample only, which is
+ * what an unrelated payment on the same account should be.
+ */
+export function paymentArrivalOf(
+  body: RazorpayWebhook,
+  eventId: string,
+): {
+  eventId: string;
+  caseId: number;
+  amountPaise: number;
+  reference: string;
+  via: string;
+  at?: Date;
+  raw: unknown;
+} | null {
+  const payload = body.payload ?? {};
+  const payment = payload.payment?.entity ?? {};
+  const link = payload.payment_link?.entity ?? {};
+
+  const notes = { ...((link.notes ?? {}) as Record<string, unknown>), ...((payment.notes ?? {}) as Record<string, unknown>) };
+  const named = str(notes.tugboat_case) ?? str(link.reference_id);
+  const caseId = named ? caseIdFromRef(named) : null;
+  if (caseId === null) return null;
+
+  const paymentId = str(payment.id) ?? str(link.id);
+  if (!paymentId) return null;
+
+  return {
+    eventId,
+    caseId,
+    amountPaise: num(payment.amount) ?? num(link.amount_paid) ?? num(link.amount) ?? 0,
+    reference: paymentId,
+    via: body.event === "payment_link.paid" ? "Paid from the payment link · Razorpay" : "Payment captured · Razorpay",
+    at: body.created_at ? new Date(body.created_at * 1000) : undefined,
+    raw: body,
+  };
+}
+
+/** "C-1042" → 1042; anything else → null. Deliberately strict: a note is untrusted input. */
+function caseIdFromRef(value: string): number | null {
+  const match = /^C-(\d{1,9})$/.exec(value.trim());
+  return match ? Number(match[1]) : null;
 }
 
 const ORIGIN_KIND: Record<CaseType, string> = {
@@ -90,7 +140,16 @@ export function normalizeRazorpayWebhook(
   const id = str(entity.id);
   if (!id) return null;
 
-  const notes = (entity.notes ?? {}) as Record<string, unknown>;
+  // A signed event with no readable amount is not a case. Opening one at ₹0
+  // would have the agent retrying and messaging a customer about nothing
+  // (B-56); the delivery is acknowledged and recorded, not worked.
+  const amountPaise = num(entity.amount) ?? num(entity.amount_due) ?? 0;
+  if (amountPaise <= 0) return null;
+
+  const notes = (entity.notes && typeof entity.notes === "object" ? entity.notes : {}) as Record<
+    string,
+    unknown
+  >;
   const email = str(entity.email) ?? str(notes.email);
   const phone = str(entity.contact) ?? str(notes.phone);
 
@@ -100,7 +159,7 @@ export function normalizeRazorpayWebhook(
     eventType,
     occurredAt: body.created_at ? new Date(body.created_at * 1000) : new Date(),
     caseType,
-    amountPaise: num(entity.amount) ?? num(entity.amount_due) ?? 0,
+    amountPaise,
     currency: str(entity.currency) ?? "INR",
     origin: {
       kind: ORIGIN_KIND[caseType],

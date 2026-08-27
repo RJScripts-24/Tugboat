@@ -5,6 +5,9 @@ import { CaseEventsService, isUniqueViolation, withSeqRetry } from "../cases/cas
 import { CasesService } from "../cases/cases.service";
 import { OPT_OUT_LINE, ensureOptOut } from "../channels/message-copy";
 import { toCaseRef } from "../common/case-ref";
+import { ClockService } from "../common/clock.service";
+import { narratedCases } from "../cases/narrated";
+import { DomainEventsService } from "../common/domain-events.service";
 import { maskedContact } from "../common/mask";
 import { PolicyService } from "../policy/policy.service";
 import type { PolicyChannel } from "../policy/policy-pack";
@@ -133,6 +136,8 @@ export class ApprovalsService {
     private readonly cases: CasesService,
     private readonly events: CaseEventsService,
     private readonly policy: PolicyService,
+    private readonly clock: ClockService,
+    private readonly domain: DomainEventsService,
     @Inject(ACTION_QUEUE) private readonly queue: ActionQueue,
   ) {}
 
@@ -209,7 +214,7 @@ export class ApprovalsService {
     );
 
     try {
-      const approval = await this.prisma.$transaction(async (tx) => {
+      const approval = await this.prisma.transaction(async (tx) => {
         const action = await tx.action.create({
           data: {
             caseId: record.id,
@@ -230,6 +235,12 @@ export class ApprovalsService {
           data: {
             caseId: record.id,
             actionId: action.id,
+            // Explicit rather than the column default, which is the database's
+            // clock. A batch works ten simulated days in a few minutes, and a
+            // request stamped with the wall clock is a request that was raised
+            // in the future relative to every decision about it — so nothing
+            // ever became old enough to answer (B-28).
+            requestedAt: this.clock.now(),
             gate: input.gate,
             headline: ask.headline,
             justification: ask.justification as unknown as Prisma.InputJsonValue,
@@ -248,6 +259,13 @@ export class ApprovalsService {
       this.logger.log(
         `${toCaseRef(record.id)} raised ${input.gate} approval ${approval.id} · ${ask.headline}`,
       );
+
+      await this.announceQueueDepth(record.merchantId, {
+        name: "approval.pending",
+        approvalId: approval.id,
+        caseId: toCaseRef(record.id),
+        gate: input.gate,
+      });
 
       return { ...approval, case: record };
     } catch (error) {
@@ -278,7 +296,7 @@ export class ApprovalsService {
    */
   async pending(merchantId: string): Promise<ApprovalRequestView[]> {
     const rows = await this.prisma.approval.findMany({
-      where: { decision: null, case: { merchantId } },
+      where: { decision: null, case: narratedCases(merchantId) },
       include: { case: { include: { customer: true } } },
       orderBy: { atRiskPaise: "desc" },
     });
@@ -288,14 +306,14 @@ export class ApprovalsService {
 
   async pendingCount(merchantId: string): Promise<number> {
     return this.prisma.approval.count({
-      where: { decision: null, case: { merchantId } },
+      where: { decision: null, case: narratedCases(merchantId) },
     });
   }
 
   /** Decisions already taken, newest first — the reading order of a log. */
   async history(merchantId: string): Promise<ApprovalHistoryView[]> {
     const rows = await this.prisma.approval.findMany({
-      where: { decision: { not: null }, case: { merchantId } },
+      where: { decision: { not: null }, case: narratedCases(merchantId) },
       include: { case: { include: { customer: true } } },
       orderBy: { decidedAt: "desc" },
     });
@@ -491,7 +509,7 @@ export class ApprovalsService {
       draft: DraftMessage;
     },
   ): Promise<DecidedApprovalView> {
-    const decidedAt = new Date();
+    const decidedAt = this.clock.now();
     const latencySeconds = Math.max(
       1,
       Math.round((decidedAt.getTime() - row.requestedAt.getTime()) / 1000),
@@ -501,7 +519,7 @@ export class ApprovalsService {
 
     const updated = await withSeqRetry(
       () =>
-        this.prisma.$transaction(async (tx) => {
+        this.prisma.transaction(async (tx) => {
           const approval = await tx.approval.update({
             where: { id: row.id },
             data: {
@@ -577,7 +595,55 @@ export class ApprovalsService {
       `${toCaseRef(row.caseId)} approval ${row.id} ${input.decision} by ${input.by} in ${latencySeconds}s`,
     );
 
+    await this.announceQueueDepth(row.case.merchantId, {
+      name: "approval.decided",
+      approvalId: row.id,
+      caseId: toCaseRef(row.caseId),
+      decision: approved ? "APPROVED" : "REJECTED",
+    });
+
     return this.toDecided({ ...updated, case: row.case });
+  }
+
+  /**
+   * Tells the sidebar badge what the queue is now, rather than what changed.
+   *
+   * A badge that increments and decrements on events drifts the first time one
+   * is missed — a socket that reconnected mid-decision leaves a merchant
+   * looking at a "3" over an empty queue forever. So the count is queried and
+   * sent whole: the browser is told the answer, not an instruction for
+   * arriving at it. One extra count query per decision is a cheap price for a
+   * number that cannot go wrong (D-106).
+   *
+   * Published after the transaction rather than inside it, because this is the
+   * one figure that must be read *after* the write lands.
+   */
+  private async announceQueueDepth(
+    merchantId: string,
+    event:
+      | { name: "approval.pending"; approvalId: string; caseId: string; gate: ApprovalGate }
+      | {
+          name: "approval.decided";
+          approvalId: string;
+          caseId: string;
+          decision: "APPROVED" | "REJECTED";
+        },
+  ): Promise<void> {
+    // A batch answers its own escalations through the simulated merchant, and
+    // none of them are in the queue a human sees (D-120); telling every open
+    // browser the queue moved would refresh every page for the length of a
+    // run. Same rule as the feed (D-101).
+    if (this.clock.shifted) return;
+
+    const pending = await this.prisma.approval.count({
+      where: { case: narratedCases(merchantId), decision: null },
+    });
+
+    this.domain.publish(
+      event.name === "approval.pending"
+        ? { ...event, merchantId, pending }
+        : { ...event, merchantId, pending },
+    );
   }
 
   /** A refusal that ends the case: no further contact, and the reason on the record. */

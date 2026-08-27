@@ -2,11 +2,9 @@ import { Injectable } from "@nestjs/common";
 
 import type { GatePass } from "../policy/gate-pass";
 import type { ChannelAdapter, ChannelSendResult, SendRequest } from "./channel-adapter.interface";
+import { CHANNEL_COST_PAISE } from "./channel-costs";
 import { payLink, seededUnit, whatsappMessageId } from "./channel-refs";
 import { whatsappCopy, whatsappTemplate } from "./message-copy";
-
-/** Twilio's WhatsApp sandbox rate, so the cost report has a real number in it. */
-const WHATSAPP_COST_PAISE = 42;
 
 @Injectable()
 export class SimulatedWhatsappAdapter implements ChannelAdapter {
@@ -22,7 +20,7 @@ export class SimulatedWhatsappAdapter implements ChannelAdapter {
     return {
       channelRef: whatsappMessageId(pass.caseId, request.attempt),
       mode: this.mode,
-      costPaise: WHATSAPP_COST_PAISE,
+      costPaise: CHANNEL_COST_PAISE.WHATSAPP,
       detail: {
         kind: "message",
         channel: "WHATSAPP",

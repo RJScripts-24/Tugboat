@@ -3,11 +3,13 @@ import type { Prisma, Sentiment } from "@prisma/client";
 
 import { CasesService } from "../cases/cases.service";
 import { toCaseRef } from "../common/case-ref";
+import { ClockService } from "../common/clock.service";
 import type { PolicyChannel } from "../policy/policy-pack";
 import { PolicyService } from "../policy/policy.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ACTION_QUEUE, type ActionQueue } from "../queue/action-queue.interface";
-import { LlmSchemaError, LlmService } from "./llm.service";
+import { cancelCaseWork } from "../queue/cancel-case-work";
+import { LlmFailure, LlmService } from "./llm.service";
 import { matchOptOut } from "./opt-out";
 import { sentimentSchema } from "./schemas";
 
@@ -43,6 +45,31 @@ const HARDSHIP_PHRASES = [
   "fraud",
 ];
 
+/**
+ * A customer saying the price is the problem.
+ *
+ * Deliberately separate from the hardship list and checked after it: "I cannot
+ * afford this" is somebody in trouble and belongs to a person, while "any
+ * discount available?" is a negotiation the agent may put to the merchant. The
+ * two produce different escalation gates and the wrong reading of either would
+ * be an unkind mistake, so the phrases here are all about the *amount* rather
+ * than about the customer's circumstances.
+ */
+const PRICE_PHRASES = [
+  "discount",
+  "offer",
+  "too costly",
+  "too expensive",
+  "expensive",
+  "cheaper",
+  "reduce the price",
+  "do something on the price",
+  "kam kar",
+  "kam karo",
+  "mehenga",
+  "sasta",
+];
+
 const SYSTEM_PROMPT = [
   "You classify a single inbound customer reply to a payment reminder from an Indian merchant.",
   "Replies may be in English, Hindi, or Hinglish written in Latin script.",
@@ -75,6 +102,8 @@ export type InboundOutcome = {
   score: number;
   matchedKeyword: string | null;
   hardship: boolean;
+  /** The customer objected to the amount, which is the only opening for a concession. */
+  priceObjection: boolean;
   consequence: "halted" | "escalated" | "continues";
 };
 
@@ -87,6 +116,7 @@ export class InboundService {
     private readonly cases: CasesService,
     private readonly llm: LlmService,
     private readonly policy: PolicyService,
+    private readonly clock: ClockService,
     @Inject(ACTION_QUEUE) private readonly queue: ActionQueue,
   ) {}
 
@@ -112,6 +142,9 @@ export class InboundService {
     // Either verdict closes the customer on every channel, permanently.
     const optedOut = keyword !== null || classified.sentiment === "opt_out";
     const hardship = !optedOut && isHardship(reply.text, classified.reasoning);
+    // Hardship wins where both read: somebody who cannot pay at all is not
+    // haggling, and offering them 10% off would be the wrong answer twice.
+    const priceObjection = !optedOut && !hardship && isPriceObjection(reply.text);
 
     // Recorded on the case rather than parsed back out of the timeline: the
     // PolicyGate reads these on every check, and the score is what the
@@ -121,14 +154,15 @@ export class InboundService {
       data: {
         lastSentiment: classified.sentiment,
         lastSentimentScore: classified.score,
-        ...(hardship ? { hardshipFlaggedAt: new Date() } : {}),
+        ...(hardship ? { hardshipFlaggedAt: this.clock.now() } : {}),
+        ...(priceObjection ? { discountRequestedAt: this.clock.now() } : {}),
       },
     });
 
     if (optedOut) {
       await this.prisma.customer.update({
         where: { id: record.customerId },
-        data: { optedOutAt: reply.at ?? new Date() },
+        data: { optedOutAt: reply.at ?? this.clock.now() },
       });
     }
 
@@ -172,6 +206,14 @@ export class InboundService {
             mono: true,
           },
           { label: "Consequence", value: CONSEQUENCE_COPY[consequence] },
+          ...(priceObjection
+            ? [
+                {
+                  label: "Price objection",
+                  value: "Recorded — a concession may now be proposed, and it needs approval",
+                },
+              ]
+            : []),
         ],
       } as unknown as Prisma.InputJsonValue,
     });
@@ -188,6 +230,7 @@ export class InboundService {
       score: classified.score,
       matchedKeyword: keyword,
       hardship,
+      priceObjection,
       consequence,
     };
   }
@@ -206,12 +249,13 @@ export class InboundService {
         reasoning: result.value.reasoning,
       };
     } catch (error) {
-      if (!(error instanceof LlmSchemaError)) throw error;
+      if (!(error instanceof LlmFailure)) throw error;
 
-      // An unreadable classification is not a neutral reply. Treating it as
-      // neutral would let the agent carry on nudging somebody whose answer it
-      // never understood, so the case goes to a person instead.
-      this.logger.error(`Sentiment classification failed for case ${reply.caseId}: ${error.issues}`);
+      // An unreadable classification is not a neutral reply, and neither is an
+      // unreachable classifier. Treating either as neutral would let the agent
+      // carry on nudging somebody whose answer it never understood, so the
+      // case goes to a person instead.
+      this.logger.error(`Sentiment classification failed for case ${reply.caseId}: ${error.message}`);
       return {
         sentiment: "negative" as Sentiment,
         score: -1,
@@ -315,26 +359,8 @@ export class InboundService {
     });
   }
 
-  /**
-   * Drops every queued job for a case.
-   *
-   * A halt that leaves a scheduled nudge in the queue is not a halt — it is a
-   * delay. The job ids are derived rather than stored, so the whole plausible
-   * range is cancelled; cancelling an id that was never scheduled is a no-op.
-   */
-  private async cancelPending(caseId: number): Promise<void> {
-    for (let attempt = 0; attempt <= 8; attempt += 1) {
-      await this.queue.cancel(`case:${caseId}:step:${attempt}`);
-    }
-
-    const promises = await this.prisma.paymentPromise.findMany({
-      where: { caseId, status: "PENDING" },
-      select: { id: true },
-    });
-
-    for (const promise of promises) {
-      await this.queue.cancel(`promise:${promise.id}`);
-    }
+  private cancelPending(caseId: number): Promise<void> {
+    return cancelCaseWork(this.queue, this.prisma, caseId);
   }
 }
 
@@ -347,6 +373,18 @@ const CONSEQUENCE_COPY: Record<InboundOutcome["consequence"], string> = {
 function isHardship(text: string, reasoning: string): boolean {
   const haystack = `${text} ${reasoning}`.toLowerCase();
   return HARDSHIP_PHRASES.some((phrase) => haystack.includes(phrase));
+}
+
+/**
+ * Read from the customer's own words only, never from the classifier's prose.
+ *
+ * The reasoning field is model output, and a model that mentions "discount"
+ * while explaining why a reply is neutral would otherwise put a concession on
+ * the table that nobody asked for.
+ */
+function isPriceObjection(text: string): boolean {
+  const haystack = text.toLowerCase();
+  return PRICE_PHRASES.some((phrase) => haystack.includes(phrase));
 }
 
 function wire(sentiment: Sentiment): string {

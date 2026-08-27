@@ -3,7 +3,8 @@ import Link from "next/link";
 import type { ComponentType, SVGProps } from "react";
 
 import { formatPercent, formatRupeesCompact } from "@/lib/money";
-import { getGrading, getHeadline } from "@/lib/simulation-data";
+import { getPublicHeadline } from "@/lib/queries";
+import type { PublicHeadline } from "@/lib/simulation-data";
 import { ClockIcon, RupeeCircleIcon, ShieldSolidIcon, UsersSolidIcon } from "./icons";
 import { Reveal } from "./reveal";
 
@@ -23,36 +24,38 @@ type Stat = {
  * payments company is precisely the audience most likely to ask for the
  * source - at which point every real number on the site becomes suspect too.
  *
- * What replaces them is the pinned evidence run: the same seeded batch the
- * Simulation Lab reports, read from the same module, so the landing page
- * cannot drift from the report behind it. A visitor can rerun the seed and get
- * these figures back.
+ * What replaces them is the promoted evidence run, read from the API's one
+ * public endpoint - the same report the Simulation Lab draws, so the landing
+ * page cannot drift from the evidence behind it. A visitor can rerun the seed
+ * and get these figures back.
+ *
+ * With no promoted run they read as dashes rather than as plausible numbers.
  */
-function stats(): Stat[] {
-  const headline = getHeadline();
-  const grading = getGrading();
+function stats(headline: PublicHeadline): Stat[] {
+  const has = headline.runId !== null;
+  const or = (value: string) => (has ? value : "—");
 
   return [
     {
-      value: formatPercent(headline.recoveryRate),
+      value: or(formatPercent(headline.recoveryRate)),
       label: "Of at-risk revenue recovered",
       Icon: RupeeCircleIcon,
       tone: "#8b8bf5",
     },
     {
-      value: `+${headline.upliftPoints.toFixed(1)} pts`,
+      value: or(`+${headline.upliftPoints.toFixed(1)} pts`),
       label: "Uplift over the same batch, agent off",
       Icon: ShieldSolidIcon,
       tone: "#4a90f0",
     },
     {
-      value: formatPercent(grading.accuracy),
+      value: or(formatPercent(headline.accuracy)),
       label: "Diagnoses correct vs ground truth",
       Icon: UsersSolidIcon,
       tone: "#8b8bf5",
     },
     {
-      value: `₹${formatRupeesCompact(headline.atRiskPaise)}`,
+      value: or(`₹${formatRupeesCompact(headline.atRiskPaise)}`),
       label: "At risk in the batch measured",
       Icon: ClockIcon,
       tone: "#8b8bf5",
@@ -60,9 +63,9 @@ function stats(): Stat[] {
   ];
 }
 
-export function BoaStats() {
-  const headline = getHeadline();
-  const STATS = stats();
+export async function BoaStats() {
+  const headline = await getPublicHeadline();
+  const STATS = stats(headline);
 
   return (
     <section id="product" className="relative bg-[#050e19] pb-14 lg:pb-[52px]">
@@ -128,8 +131,10 @@ export function BoaStats() {
 
             {/* Where the numbers come from, next to the numbers. */}
             <p className="mt-8 text-center text-[13.5px] leading-[1.6] text-[#7d879a] md:mt-7">
-              Measured on a pinned evidence run — seed 42, {headline.cases} synthetic cases, graded
-              against ground truth. Not production figures: Tugboat has no live merchants yet.{" "}
+              {headline.runId
+                ? `Measured on run ${headline.runId} — seed ${headline.seed}, ${headline.cases} synthetic cases, graded against ground truth.`
+                : "No evidence run has been promoted yet — these fill in when a batch has been run."}{" "}
+              Not production figures: Tugboat has no live merchants yet.{" "}
               <Link
                 href="/simulation"
                 className="text-[#9aa8bd] underline underline-offset-[3px] transition-colors hover:text-white"

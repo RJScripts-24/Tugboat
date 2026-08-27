@@ -25,9 +25,9 @@ import {
 } from "@/components/dashboard/icons";
 import { MoneyValue } from "@/components/dashboard/primitives";
 import { TONE_HEX, type Tone } from "@/lib/dashboard-data";
+import { stampOf } from "@/lib/clock";
 import {
   CHANNEL_META,
-  stampOf,
   type CaseEvent,
   type EventBody,
   type EventKind,
@@ -332,7 +332,11 @@ function Body({ body, kind }: { body: EventBody; kind: EventKind }) {
     case "voice":
       return (
         <>
-          <VoicePlayer seconds={body.seconds} turns={body.transcript} />
+          <VoicePlayer
+            seconds={body.seconds}
+            turns={body.transcript}
+            audioUrl={body.audioUrl ?? null}
+          />
           <p className="mt-3 text-[12.5px] leading-[1.6] text-txt-faint">{body.summary}</p>
           <Disclosure label="Transcript and call record">
             <ol className="space-y-2.5">
@@ -475,7 +479,45 @@ function TurnRow({ turn }: { turn: Turn }) {
  * The waveform is seeded from the turn text, so a given call always draws the
  * same shape.
  */
-function VoicePlayer({ seconds, turns }: { seconds: number; turns: Turn[] }) {
+function VoicePlayer({
+  seconds,
+  turns,
+  audioUrl,
+}: {
+  seconds: number;
+  turns: Turn[];
+  /** Set when the API stitched a recording server-side; the browser then streams it instead of synthesising. */
+  audioUrl: string | null;
+}) {
+  // A stored recording, when there is one. Still not a phone call — telephony
+  // is simulated and labelled — but it is the same audio for every listener,
+  // rendered once by the API from the transcript, which the browser-side
+  // synthesis below never was.
+  if (audioUrl) return <RecordingPlayer src={audioUrl} seconds={seconds} />;
+
+  return <SynthesisedPlayer seconds={seconds} turns={turns} />;
+}
+
+function RecordingPlayer({ src, seconds }: { src: string; seconds: number }) {
+  return (
+    <div className="mt-3">
+      <div className="border border-white/[0.14] px-3.5 py-3">
+        {/* Native controls: the file is the product here, not the chrome, and
+            a stream that the browser can scrub is worth more than a waveform
+            it cannot. */}
+        <audio controls preload="none" src={src} className="h-[32px] w-full">
+          <track kind="captions" />
+        </audio>
+      </div>
+      <p className="mt-1.5 text-[11px] leading-[1.5] text-txt-faint">
+        Synthesised recording rendered server-side from the transcript below ({clock(seconds)} of
+        simulated call) — not a phone call. Telephony is simulated and labelled by design.
+      </p>
+    </div>
+  );
+}
+
+function SynthesisedPlayer({ seconds, turns }: { seconds: number; turns: Turn[] }) {
   const [playing, setPlaying] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [voiceName, setVoiceName] = useState<string | null>(null);

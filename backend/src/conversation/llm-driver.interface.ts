@@ -41,3 +41,15 @@ export interface LlmDriver {
 }
 
 export const LLM_DRIVER = Symbol("LLM_DRIVER");
+
+/**
+ * How long one model call may take before it is treated as a provider that
+ * did not answer.
+ *
+ * Without a bound a hung connection holds the worker's slot for as long as the
+ * socket lives, which on some networks is forever; the job is never retried
+ * because it never fails. Thirty seconds is several times the slowest answer
+ * either free tier gives, and short enough that a case stuck behind a dead
+ * provider reaches a human in the same minute (D-130).
+ */
+export const LLM_TIMEOUT_MS = 30_000;

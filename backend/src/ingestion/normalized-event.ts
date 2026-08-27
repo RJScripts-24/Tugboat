@@ -38,4 +38,14 @@ export type NormalizedEvent = {
 
   /** The untouched provider payload, stored for replay and audit. */
   raw: unknown;
+
+  /**
+   * The batch this case belongs to, when one produced it.
+   *
+   * Attribution, not behaviour: nothing downstream branches on it, and the
+   * agent has no way to ask what a `simRunId` means. It exists so a completed
+   * run can be measured, promoted or cleared as a unit, which a report that
+   * could not tell its own cases from live ones would make impossible.
+   */
+  simRunId?: string;
 };

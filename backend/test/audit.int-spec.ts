@@ -8,12 +8,14 @@ import type { Prisma } from "@prisma/client";
 import { AgentWorker } from "../src/agent-core/agent-worker";
 import { ExecutorService } from "../src/agent-core/executor.service";
 import { AppModule } from "../src/app.module";
+import { ClockService } from "../src/common/clock.service";
 import { ApprovalsService } from "../src/approvals/approvals.service";
 import { AuditService } from "../src/audit/audit.service";
 import { PolicyService } from "../src/policy/policy.service";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { ACTION_QUEUE } from "../src/queue/action-queue.interface";
 import { InlineActionQueue } from "../src/queue/inline-action-queue";
+import { daylightIt } from "./daytime-clock";
 import { purgeLedgerForCases, tamperWithLedgerRow } from "./ledger-maintenance";
 
 /**
@@ -34,8 +36,12 @@ describe("Audit ledger (integration)", () => {
   let approvals: ApprovalsService;
   let policy: PolicyService;
   let queue: InlineActionQueue;
+  let clock: ClockService;
   let merchantId: string;
   let merchantName: string;
+
+  // The chains these tests verify are built by real sends; see ./daytime-clock.
+  const itd = daylightIt(() => clock);
 
   const touchedCases: number[] = [];
   const startedAt = new Date();
@@ -103,6 +109,7 @@ describe("Audit ledger (integration)", () => {
     approvals = app.get(ApprovalsService);
     policy = app.get(PolicyService);
     queue = app.get(ACTION_QUEUE);
+    clock = app.get(ClockService);
 
     const merchant = await prisma.merchant.findFirst({ orderBy: { createdAt: "asc" } });
     if (!merchant) throw new Error("No merchant seeded — run `npm run db:seed` first.");
@@ -134,7 +141,7 @@ describe("Audit ledger (integration)", () => {
   /* ---------------------------------------------------------------- */
 
   describe("history cannot be written without evidence", () => {
-    it("writes one ledger row for every case event, in the same order", async () => {
+    itd("writes one ledger row for every case event, in the same order", async () => {
       const { caseId, chain } = await workedCase();
 
       const events = await prisma.caseEvent.findMany({
@@ -150,7 +157,7 @@ describe("Audit ledger (integration)", () => {
       expect(rows.map((row) => row.detail)).toEqual(events.map((event) => event.summary));
     });
 
-    it("attributes each row to the actor the contract names", async () => {
+    itd("attributes each row to the actor the contract names", async () => {
       const { chain } = await workedCase();
       const rows = await ledgerFor(chain);
 
@@ -160,7 +167,7 @@ describe("Audit ledger (integration)", () => {
       expect(byAction.get("ACTION_EXECUTED")).toBe("BOA");
     });
 
-    it("starts every chain at ten zeroes and links each row to the one before", async () => {
+    itd("starts every chain at ten zeroes and links each row to the one before", async () => {
       const { chain } = await workedCase();
       const rows = await ledgerFor(chain);
 
@@ -171,7 +178,7 @@ describe("Audit ledger (integration)", () => {
       }
     });
 
-    it("keeps a case's chain to itself", async () => {
+    itd("keeps a case's chain to itself", async () => {
       const first = await workedCase();
       const second = await workedCase();
 
@@ -183,7 +190,7 @@ describe("Audit ledger (integration)", () => {
       expect((await ledgerFor(second.chain))[0].seq).toBe(1);
     });
 
-    it("rolls the ledger row back with the event when the transaction fails", async () => {
+    itd("rolls the ledger row back with the event when the transaction fails", async () => {
       const caseId = await openCase();
       const before = (await ledgerFor(`C-${caseId}`)).length;
 
@@ -205,7 +212,7 @@ describe("Audit ledger (integration)", () => {
   /* ---------------------------------------------------------------- */
 
   describe("the rows carry what the contract says they carry", () => {
-    it("masks the contact before storage and lists the path that was masked", async () => {
+    itd("masks the contact before storage and lists the path that was masked", async () => {
       const { caseId, chain } = await workedCase();
       const customer = await prisma.customer.findFirstOrThrow({
         where: { cases: { some: { id: caseId } } },
@@ -220,7 +227,7 @@ describe("Audit ledger (integration)", () => {
       expect(sent!.masked).toContain("recipient");
     });
 
-    it("references the message body by shape rather than storing it", async () => {
+    itd("references the message body by shape rather than storing it", async () => {
       const { chain } = await workedCase();
       const sent = (await ledgerFor(chain)).find((row) => row.action === "ACTION_EXECUTED");
       const payload = sent!.payload as Record<string, unknown>;
@@ -229,7 +236,7 @@ describe("Audit ledger (integration)", () => {
       expect(JSON.stringify(payload)).not.toContain("Reply STOP");
     });
 
-    it("keeps the gate's full checklist, which is what the compliance figures are counted from", async () => {
+    itd("keeps the gate's full checklist, which is what the compliance figures are counted from", async () => {
       const { chain } = await workedCase();
       const check = (await ledgerFor(chain)).find((row) => row.action === "POLICY_EVALUATED");
       const payload = check!.payload as { verdict: string; checks: { name: string }[] };
@@ -239,7 +246,7 @@ describe("Audit ledger (integration)", () => {
       expect(payload.checks.map((entry) => entry.name)).toContain("Opt-out");
     });
 
-    it("ships the preimage, so the browser can recompute rather than be told", async () => {
+    itd("ships the preimage, so the browser can recompute rather than be told", async () => {
       const { chain } = await workedCase();
       const { rows } = await audit.list(merchantId, { chain });
 
@@ -254,7 +261,7 @@ describe("Audit ledger (integration)", () => {
   /* ---------------------------------------------------------------- */
 
   describe("verification", () => {
-    it("passes on a chain nobody has touched", async () => {
+    itd("passes on a chain nobody has touched", async () => {
       const { chain } = await workedCase();
       const verdict = await audit.verify(merchantId, { chain });
 
@@ -263,7 +270,7 @@ describe("Audit ledger (integration)", () => {
       expect(verdict.chains).toBe(1);
     });
 
-    it("breaks at exactly the tampered row, and at every row after it", async () => {
+    itd("breaks at exactly the tampered row, and at every row after it", async () => {
       const { chain } = await workedCase();
       const rows = await ledgerFor(chain);
       // Plan, gate, send — enough of a chain that "and every row after it" is a
@@ -284,7 +291,7 @@ describe("Audit ledger (integration)", () => {
       expect(verdict.broken[0].id).toBe(`${chain}#${target.seq}`);
     });
 
-    it("catches a detail line edited to say something friendlier", async () => {
+    itd("catches a detail line edited to say something friendlier", async () => {
       const { chain } = await workedCase();
       const rows = await ledgerFor(chain);
       const target = rows[rows.length - 1];
@@ -295,7 +302,7 @@ describe("Audit ledger (integration)", () => {
       expect(verdict.broken.map((entry) => entry.seq)).toEqual([target.seq]);
     });
 
-    it("catches a row removed from the middle of a chain", async () => {
+    itd("catches a row removed from the middle of a chain", async () => {
       const { caseId, chain } = await workedCase();
       const rows = await ledgerFor(chain);
 
@@ -311,7 +318,7 @@ describe("Audit ledger (integration)", () => {
       expect(caseId).toBeGreaterThan(0);
     });
 
-    it("leaves other chains verifying when one is broken", async () => {
+    itd("leaves other chains verifying when one is broken", async () => {
       const damaged = await workedCase();
       const healthy = await workedCase();
 
@@ -324,7 +331,7 @@ describe("Audit ledger (integration)", () => {
       expect((await audit.verify(merchantId, { chain: healthy.chain })).broken).toEqual([]);
     });
 
-    it("names both digests it checked with", async () => {
+    itd("names both digests it checked with", async () => {
       const verdict = await audit.verify(merchantId, { chain: (await workedCase()).chain });
 
       expect(verdict.digests.browser).toContain("fnv1a");
@@ -335,7 +342,7 @@ describe("Audit ledger (integration)", () => {
   /* ---------------------------------------------------------------- */
 
   describe("the database refuses to rewrite a written row", () => {
-    it("rejects an UPDATE", async () => {
+    itd("rejects an UPDATE", async () => {
       const { chain } = await workedCase();
       const row = (await ledgerFor(chain))[0];
 
@@ -349,7 +356,7 @@ describe("Audit ledger (integration)", () => {
       expect(after.detail).toBe(row.detail);
     });
 
-    it("rejects a DELETE", async () => {
+    itd("rejects a DELETE", async () => {
       const { chain } = await workedCase();
       const row = (await ledgerFor(chain))[0];
 
@@ -360,7 +367,7 @@ describe("Audit ledger (integration)", () => {
       expect(await prisma.auditLedger.count({ where: { id: row.id } })).toBe(1);
     });
 
-    it("rejects a bulk UPDATE across the whole table", async () => {
+    itd("rejects a bulk UPDATE across the whole table", async () => {
       await expect(
         prisma.auditLedger.updateMany({
           where: { merchantId },
@@ -369,7 +376,7 @@ describe("Audit ledger (integration)", () => {
       ).rejects.toThrow(/append-only/);
     });
 
-    it("still allows an INSERT — appending is the whole point", async () => {
+    itd("still allows an INSERT — appending is the whole point", async () => {
       const before = await prisma.auditLedger.count({ where: { merchantId } });
       await workedCase();
 
@@ -380,7 +387,7 @@ describe("Audit ledger (integration)", () => {
   /* ---------------------------------------------------------------- */
 
   describe("the policy pack has its own chain", () => {
-    it("records a policy edit as a HUMAN row on the policy chain", async () => {
+    itd("records a policy edit as a HUMAN row on the policy chain", async () => {
       const before = await prisma.auditLedger.count({
         where: { merchantId, chain: "policy" },
       });
@@ -407,7 +414,7 @@ describe("Audit ledger (integration)", () => {
       expect(payload.changes.join(" ")).toContain("coolDownHours");
     });
 
-    it("verifies as its own chain, unaffected by any case", async () => {
+    itd("verifies as its own chain, unaffected by any case", async () => {
       const verdict = await audit.verify(merchantId, { chain: "policy" });
       expect(verdict.broken).toEqual([]);
     });
@@ -416,7 +423,7 @@ describe("Audit ledger (integration)", () => {
   /* ---------------------------------------------------------------- */
 
   describe("GET /audit", () => {
-    it("filters to one case", async () => {
+    itd("filters to one case", async () => {
       const { caseId, chain } = await workedCase();
       const { rows, total } = await audit.list(merchantId, { caseId });
 
@@ -425,7 +432,7 @@ describe("Audit ledger (integration)", () => {
       expect(rows.every((row) => row.caseId === chain)).toBe(true);
     });
 
-    it("filters by actor and by action", async () => {
+    itd("filters by actor and by action", async () => {
       const { caseId } = await workedCase();
 
       const byActor = await audit.list(merchantId, { caseId, actor: ["POLICY"] });
@@ -436,7 +443,7 @@ describe("Audit ledger (integration)", () => {
       expect(byAction.rows.every((row) => row.action === "ACTION_EXECUTED")).toBe(true);
     });
 
-    it("filters by time range", async () => {
+    itd("filters by time range", async () => {
       const { caseId } = await workedCase();
       const all = await audit.list(merchantId, { caseId });
       const newest = Math.max(...all.rows.map((row) => row.atMs));
@@ -448,7 +455,7 @@ describe("Audit ledger (integration)", () => {
       expect(past.total).toBeGreaterThan(0);
     });
 
-    it("pages without losing rows", async () => {
+    itd("pages without losing rows", async () => {
       const { caseId } = await workedCase();
       const all = await audit.list(merchantId, { caseId });
 
@@ -460,7 +467,7 @@ describe("Audit ledger (integration)", () => {
       expect(first.total).toBe(all.total);
     });
 
-    it("returns newest first", async () => {
+    itd("returns newest first", async () => {
       const { caseId } = await workedCase();
       const { rows } = await audit.list(merchantId, { caseId });
 
@@ -469,7 +476,7 @@ describe("Audit ledger (integration)", () => {
       }
     });
 
-    it("reports the tip of each chain, so an appended row continues it", async () => {
+    itd("reports the tip of each chain, so an appended row continues it", async () => {
       const { chain } = await workedCase();
       const rows = await ledgerFor(chain);
       const tips = await audit.tips(merchantId);
@@ -480,7 +487,7 @@ describe("Audit ledger (integration)", () => {
       });
     });
 
-    it("shows a merchant only their own rows", async () => {
+    itd("shows a merchant only their own rows", async () => {
       const stranger = await prisma.merchant.create({
         data: {
           email: `ledger-outsider-${RUN}@example.test`,
@@ -503,7 +510,7 @@ describe("Audit ledger (integration)", () => {
   /* ---------------------------------------------------------------- */
 
   describe("a human decision reaches the ledger as a human decision", () => {
-    it("records an approval with HUMAN against it", async () => {
+    itd("records an approval with HUMAN against it", async () => {
       const caseId = await openCase(
         { amountPaise: 42_000 * RUPEE, type: "INVOICE_OVERDUE" },
         { segment: "B2B" },
@@ -525,7 +532,7 @@ describe("Audit ledger (integration)", () => {
       expect((await audit.verify(merchantId, { chain: `C-${caseId}` })).broken).toEqual([]);
     });
 
-    it("records the escalation that preceded it as a POLICY row", async () => {
+    itd("records the escalation that preceded it as a POLICY row", async () => {
       const caseId = await openCase({ diagnosisConfidence: 0.4, rootCause: "UNKNOWN" });
       await executor.step(caseId);
 

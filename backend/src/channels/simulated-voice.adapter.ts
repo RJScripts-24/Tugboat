@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 
+import { VoiceAudioService } from "../conversation/voice-audio.service";
 import { VoiceDialogueService } from "../conversation/voice-dialogue.service";
 import type { GatePass } from "../policy/gate-pass";
 import type {
@@ -8,10 +9,8 @@ import type {
   SendRequest,
   VoiceCounterpart,
 } from "./channel-adapter.interface";
+import { voiceCostPaise } from "./channel-costs";
 import { seededUnit, voiceCallId } from "./channel-refs";
-
-/** Per-minute telephony at Indian rates, rounded up to the minute as carriers bill. */
-const VOICE_COST_PAISE_PER_MINUTE = 55;
 
 const inr = (paise: number) =>
   new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(Math.round(paise / 100));
@@ -21,7 +20,10 @@ export class SimulatedVoiceAdapter implements ChannelAdapter {
   readonly channel = "VOICE" as const;
   readonly mode = "simulated" as const;
 
-  constructor(private readonly dialogue: VoiceDialogueService) {}
+  constructor(
+    private readonly dialogue: VoiceDialogueService,
+    private readonly audio: VoiceAudioService,
+  ) {}
 
   async send(pass: GatePass, request: SendRequest): Promise<ChannelSendResult> {
     const detail = await this.dialogue.converse({
@@ -34,11 +36,22 @@ export class SimulatedVoiceAdapter implements ChannelAdapter {
       counterpart: request.counterpart ?? defaultCounterpart(pass.caseId),
     });
 
+    const channelRef = voiceCallId(pass.caseId, request.attempt);
+
+    // The recording is the one real thing on this lane (D-126). It is rendered
+    // after the call is decided, so a synthesiser that is down changes nothing
+    // about the outcome — only whether there is something to play.
+    const audioUrl = await this.audio.render(channelRef, detail.transcript, detail.language);
+
     return {
-      channelRef: voiceCallId(pass.caseId, request.attempt),
+      channelRef,
       mode: this.mode,
-      costPaise: Math.ceil(detail.seconds / 60) * VOICE_COST_PAISE_PER_MINUTE,
-      detail,
+      costPaise: voiceCostPaise(detail.seconds),
+      detail: {
+        ...detail,
+        audioUrl,
+        recording: audioUrl ? `Synthesised recording · ${this.audio.provider} · not a phone call` : null,
+      },
     };
   }
 }

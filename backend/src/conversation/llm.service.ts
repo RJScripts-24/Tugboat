@@ -22,13 +22,40 @@ const PROJECTED_PRICE_PAISE = {
   out: 4.8,
 };
 
-export class LlmSchemaError extends Error {
-  constructor(
+/**
+ * Anything that stops a structured call producing a validated value.
+ *
+ * Two causes, one consequence. The model may answer with something the
+ * schema refuses, or the provider may not answer at all — a timeout, a 5xx,
+ * a network that is not there. Callers catch this base class and do the same
+ * thing either way: no answer is recorded, and the case goes to a person
+ * (D-130). Anything else thrown out of a call is a bug, and stays loud.
+ */
+export abstract class LlmFailure extends Error {
+  protected constructor(
     readonly purpose: LlmPurpose,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export class LlmSchemaError extends LlmFailure {
+  constructor(
+    purpose: LlmPurpose,
     readonly issues: string,
     readonly raw: string,
   ) {
-    super(`Model output failed the ${purpose} schema: ${issues}`);
+    super(purpose, `Model output failed the ${purpose} schema: ${issues}`);
+  }
+}
+
+export class LlmUnavailableError extends LlmFailure {
+  constructor(
+    purpose: LlmPurpose,
+    readonly cause: Error,
+  ) {
+    super(purpose, `The model could not be reached for ${purpose}: ${cause.message}`);
   }
 }
 
@@ -78,11 +105,20 @@ export class LlmService {
     let lastRaw = "";
 
     for (let attempt = 1; attempt <= 2; attempt += 1) {
-      const response = await this.driver.complete({
-        temperature: 0,
-        ...request,
-        repair: attempt === 1 ? undefined : `Your previous reply was rejected: ${lastIssues}`,
-      });
+      let response;
+      try {
+        response = await this.driver.complete({
+          temperature: 0,
+          ...request,
+          repair: attempt === 1 ? undefined : `Your previous reply was rejected: ${lastIssues}`,
+        });
+      } catch (error) {
+        // Not retried here. A provider that is down is down for the repair
+        // attempt too, and a worker that waits through two timeouts on every
+        // case is a worker that stops. The case is escalated instead.
+        this.logger.error(`${request.purpose} call failed: ${(error as Error).message}`);
+        throw new LlmUnavailableError(request.purpose, error as Error);
+      }
 
       await this.meter(request.purpose, response, context);
 

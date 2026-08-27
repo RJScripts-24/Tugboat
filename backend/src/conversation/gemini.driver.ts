@@ -1,4 +1,9 @@
-import type { LlmDriver, LlmRequest, LlmResponse } from "./llm-driver.interface";
+import {
+  LLM_TIMEOUT_MS,
+  type LlmDriver,
+  type LlmRequest,
+  type LlmResponse,
+} from "./llm-driver.interface";
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -43,6 +48,7 @@ export class GeminiDriver implements LlmDriver {
           responseMimeType: "application/json",
         },
       }),
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
     });
 
     if (!response.ok) {

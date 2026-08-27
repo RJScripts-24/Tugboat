@@ -56,3 +56,30 @@ describe("validateEnv", () => {
     expect(() => validateEnv({})).toThrow(/DATABASE_URL[\s\S]*JWT_SECRET/);
   });
 });
+
+describe("Stage 10 lanes", () => {
+  it("refuses a real lane that has no key, naming the lane and the key", () => {
+    expect(() => validateEnv({ ...VALID, CHANNEL_MODE_EMAIL: "real" })).toThrow(/CHANNEL_MODE_EMAIL.*RESEND_API_KEY/);
+    expect(() => validateEnv({ ...VALID, CHANNEL_MODE_WHATSAPP: "real" })).toThrow(/TWILIO_ACCOUNT_SID/);
+    expect(() => validateEnv({ ...VALID, CHANNEL_MODE_RAZORPAY: "real", RAZORPAY_KEY_ID: "rzp_test_x" })).toThrow(
+      /RAZORPAY_KEY_SECRET/,
+    );
+  });
+
+  it("accepts a real lane with its key", () => {
+    const env = validateEnv({ ...VALID, CHANNEL_MODE_EMAIL: "real", RESEND_API_KEY: "re_x" });
+    expect(env.CHANNEL_MODE_EMAIL).toBe("real");
+    expect(env.RESEND_FROM).toContain("onboarding@resend.dev");
+  });
+
+  it("never lets telephony claim to be real", () => {
+    expect(() => validateEnv({ ...VALID, CHANNEL_MODE_VOICE: "real" })).toThrow(/simulated and labelled/);
+  });
+
+  it("wants a key for Sarvam and none for Edge", () => {
+    expect(() => validateEnv({ ...VALID, VOICE_TTS: "sarvam" })).toThrow(/SARVAM_API_KEY/);
+    expect(validateEnv({ ...VALID, VOICE_TTS: "edge" }).VOICE_TTS).toBe("edge");
+    expect(validateEnv(VALID).VOICE_TTS).toBe("off");
+    expect(validateEnv(VALID).PUBLIC_API_URL).toBe("http://localhost:4000");
+  });
+});

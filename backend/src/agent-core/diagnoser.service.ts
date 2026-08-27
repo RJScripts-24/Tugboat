@@ -3,7 +3,7 @@ import type { DiagnosisMethod, RootCause } from "@prisma/client";
 
 import { CasesService } from "../cases/cases.service";
 import { toCaseRef } from "../common/case-ref";
-import { LlmSchemaError, LlmService } from "../conversation/llm.service";
+import { LlmFailure, LlmService } from "../conversation/llm.service";
 import { diagnosisSchema } from "../conversation/schemas";
 import { PolicyService } from "../policy/policy.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -119,12 +119,13 @@ export class DiagnoserService {
         model: `${result.provider} · ${result.model}`,
       });
     } catch (error) {
-      if (!(error instanceof LlmSchemaError)) throw error;
+      if (!(error instanceof LlmFailure)) throw error;
 
-      // The model produced something the schema refused, twice. That is not a
-      // diagnosis of UNKNOWN — it is no diagnosis at all, so the case goes to a
-      // human rather than being recorded as an answer nobody stands behind.
-      this.logger.error(`Diagnosis for case ${caseId} failed validation: ${error.issues}`);
+      // The model produced something the schema refused twice, or could not be
+      // reached at all. Neither is a diagnosis of UNKNOWN — it is no diagnosis,
+      // so the case goes to a human rather than being recorded as an answer
+      // nobody stands behind.
+      this.logger.error(`Diagnosis for case ${caseId} produced no answer: ${error.message}`);
 
       return this.commit(caseId, {
         rootCause: "UNKNOWN",

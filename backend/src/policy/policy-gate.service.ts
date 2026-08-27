@@ -1,8 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
-import type { PolicyVerdict, Prisma } from "@prisma/client";
+import type { ApprovalGate, PolicyVerdict, Prisma } from "@prisma/client";
 
 import { CaseEventsService, withSeqRetry } from "../cases/case-events.service";
 import { toCaseRef } from "../common/case-ref";
+import { ClockService } from "../common/clock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import type { GatePass, GatePassClaims } from "./gate-pass";
 import { formatClock, istMinuteOfDay } from "./ist-clock";
@@ -32,6 +33,15 @@ export type GateResult = Evaluation & {
   pass: GatePass | null;
 };
 
+/**
+ * The gates that ask about the case rather than about one message.
+ *
+ * A yes to either is spent once and then holds. A discount and a hardship
+ * stand-down are about a specific thing being offered, so they are asked every
+ * time they come up.
+ */
+const ROUTING_GATES: ApprovalGate[] = ["b2b_high_value", "confidence_below_threshold"];
+
 const VERDICT_TO_ENUM: Record<Evaluation["verdict"], PolicyVerdict> = {
   allowed: "ALLOWED",
   blocked: "BLOCKED",
@@ -46,6 +56,7 @@ export class PolicyGateService {
     private readonly prisma: PrismaService,
     private readonly policy: PolicyService,
     private readonly events: CaseEventsService,
+    private readonly clock: ClockService,
   ) {}
 
   /**
@@ -57,8 +68,16 @@ export class PolicyGateService {
    * these rows rather than taken from the agent's word, and a gate that logged
    * only its refusals could not prove a single quiet hour was respected.
    */
-  async check(caseId: number, action: GateAction): Promise<GateResult> {
+  async check(caseId: number, rawAction: GateAction): Promise<GateResult> {
+    // Wall-clock, deliberately: this measures how long the evaluation took, and
+    // a batch that has moved the agent's clock three days forward has not made
+    // its own gate checks take three days.
     const startedAt = Date.now();
+
+    // Every time comparison below reads the agent's clock rather than the
+    // process's, so an accelerated batch proves quiet hours and cool-downs on
+    // the same code a live case runs through.
+    const action: GateAction = { ...rawAction, at: rawAction.at ?? this.clock.now() };
 
     const record = await this.prisma.case.findUniqueOrThrow({
       where: { id: caseId },
@@ -67,6 +86,9 @@ export class PolicyGateService {
         // Only executed actions count against a bound: a planned-but-blocked
         // send never reached anybody and must not spend the case's rope.
         actions: { where: { status: "EXECUTED" }, orderBy: { executedAt: "desc" } },
+        // A yes already given on this case, so a routing gate is not asked
+        // again on the next rung.
+        approvals: { where: { decision: "approved" }, select: { gate: true } },
       },
     });
 
@@ -93,6 +115,7 @@ export class PolicyGateService {
       diagnosisConfidence: record.diagnosisConfidence,
       segment: record.customer.segment,
       optedOutAt: record.customer.optedOutAt,
+      pausedAt: record.pausedAt,
       lastSentiment: record.lastSentiment,
       lastSentimentScore: record.lastSentimentScore,
       hardshipFlaggedAt: record.hardshipFlaggedAt,
@@ -100,6 +123,9 @@ export class PolicyGateService {
       lastContactAt: contacts[0]?.executedAt ?? null,
       lastRepresentationAt: representations[0]?.executedAt ?? null,
       representationsThisCycle: representations.length,
+      clearedGates: record.approvals
+        .map((approval) => approval.gate)
+        .filter((gate) => ROUTING_GATES.includes(gate)),
     };
 
     const evaluation = evaluateGate(subject, action, pack, version);
@@ -134,7 +160,7 @@ export class PolicyGateService {
               caseId: record.id,
               channel: action.channel,
               policyVersion: version,
-              issuedAt: new Date(),
+              issuedAt: this.clock.now(),
             })
           : null,
     };
@@ -158,7 +184,7 @@ export class PolicyGateService {
     // workers gating the same case at once must not lose a decision row (B-16).
     return withSeqRetry(
       () =>
-        this.prisma.$transaction(async (tx) => {
+        this.prisma.transaction(async (tx) => {
           const decision = await tx.policyDecision.create({
             data: {
               caseId,

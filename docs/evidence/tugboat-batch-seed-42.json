@@ -1,0 +1,471 @@
+{
+  "run": {
+    "id": "SIM-0042-T",
+    "mix": {
+      "MANDATE_FAILED": 20,
+      "PAYMENT_FAILED": 40,
+      "INVOICE_OVERDUE": 15,
+      "CHECKOUT_ABANDONED": 25
+    },
+    "arms": [
+      "baseline",
+      "naive",
+      "tugboat"
+    ],
+    "seed": 42,
+    "batchSize": 214,
+    "caseErrors": 0,
+    "difficulty": "realistic",
+    "codeVersion": "tugboat@0.1.0",
+    "horizonDays": 10,
+    "armsExecuted": [
+      "tugboat"
+    ],
+    "policyVersion": "v15",
+    "difficultyAssumptions": {
+      "label": "Realistic",
+      "caption": "38% answer · 2.8% opt out · 13% never respond on any channel",
+      "optOutRate": 0.028,
+      "silentTail": 0.13,
+      "responseRate": 0.38,
+      "deadlineScale": 1,
+      "selfRecoveryRate": 0.118
+    }
+  },
+  "arms": [
+    {
+      "key": "baseline",
+      "optOuts": 0,
+      "contacts": 0,
+      "costPaise": 0,
+      "complaints": 0,
+      "recoveryRate": 0.13546727302474515,
+      "quietHourSends": 0,
+      "recoveredCases": 27,
+      "recoveredPaise": 32457200,
+      "costPer100Paise": null
+    },
+    {
+      "key": "naive",
+      "optOuts": 2,
+      "contacts": 1004,
+      "costPaise": 32707,
+      "complaints": 121,
+      "recoveryRate": 0.4915765977835876,
+      "quietHourSends": 508,
+      "recoveredCases": 110,
+      "recoveredPaise": 117779000,
+      "costPer100Paise": 3
+    },
+    {
+      "key": "tugboat",
+      "optOuts": 17,
+      "contacts": 408,
+      "costPaise": 13549,
+      "complaints": 38,
+      "recoveryRate": 0.4461681909093034,
+      "quietHourSends": 0,
+      "recoveredCases": 104,
+      "recoveredPaise": 106899400,
+      "costPer100Paise": 1
+    }
+  ],
+  "cost": {
+    "tokens": 43935,
+    "llmCalls": 198,
+    "llmPaise": 0,
+    "channelPaise": 13549,
+    "projectedPaise": 13553
+  },
+  "schema": "tugboat.simulation.report/1",
+  "headline": {
+    "cases": 214,
+    "atRiskPaise": 239594400,
+    "upliftPaise": 74442200,
+    "baselineRate": 0.13546727302474515,
+    "recoveryRate": 0.4461681909093034,
+    "upliftPoints": 31.070091788455823,
+    "recoveredCases": 104,
+    "recoveredPaise": 106899400
+  },
+  "diagnosis": {
+    "total": 214,
+    "wrong": 17,
+    "graded": 195,
+    "correct": 178,
+    "accuracy": 0.9128205128205128,
+    "byMethod": [
+      {
+        "graded": 177,
+        "method": "RULES",
+        "correct": 166,
+        "accuracy": 0.9378531073446328
+      },
+      {
+        "graded": 18,
+        "method": "LLM",
+        "correct": 12,
+        "accuracy": 0.6666666666666666
+      }
+    ],
+    "abstained": 19,
+    "confusions": [
+      {
+        "count": 10,
+        "truth": "INSUFFICIENT_FUNDS",
+        "called": "BANK_GATEWAY_DEGRADED"
+      },
+      {
+        "count": 4,
+        "truth": "INSUFFICIENT_FUNDS",
+        "called": "MANDATE_REVOKED"
+      },
+      {
+        "count": 1,
+        "truth": "BANK_GATEWAY_DEGRADED",
+        "called": "CUSTOMER_DISTRACTED"
+      },
+      {
+        "count": 1,
+        "truth": "BANK_GATEWAY_DEGRADED",
+        "called": "INSUFFICIENT_FUNDS"
+      },
+      {
+        "count": 1,
+        "truth": "BANK_GATEWAY_DEGRADED",
+        "called": "MANDATE_REVOKED"
+      }
+    ],
+    "undiagnosed": 0
+  },
+  "byCaseType": [
+    {
+      "rate": 0.5573728958724173,
+      "type": "PAYMENT_FAILED",
+      "cases": 86,
+      "atRiskPaise": 97492900,
+      "recoveredCases": 49,
+      "recoveredPaise": 54339900
+    },
+    {
+      "rate": 0.37745851746231485,
+      "type": "CHECKOUT_ABANDONED",
+      "cases": 53,
+      "atRiskPaise": 26860700,
+      "recoveredCases": 24,
+      "recoveredPaise": 10138800
+    },
+    {
+      "rate": 0.5950439796786018,
+      "type": "MANDATE_FAILED",
+      "cases": 43,
+      "atRiskPaise": 13995100,
+      "recoveredCases": 21,
+      "recoveredPaise": 8327700
+    },
+    {
+      "rate": 0.33673528851101825,
+      "type": "INVOICE_OVERDUE",
+      "cases": 32,
+      "atRiskPaise": 101245700,
+      "recoveredCases": 10,
+      "recoveredPaise": 34093000
+    }
+  ],
+  "compliance": {
+    "entries": 3137,
+    "verified": true,
+    "assertions": [
+      {
+        "held": true,
+        "claim": "0 messages sent inside quiet hours",
+        "detail": "281 actions deferred instead · 21:00–09:00 IST · silent retries exempt"
+      },
+      {
+        "held": true,
+        "claim": "0 contacts after an opt-out",
+        "detail": "17 customers closed at the gate · every later action on them blocked before it was sent"
+      },
+      {
+        "held": true,
+        "claim": "0 cases past their attempt cap",
+        "detail": "Counted per case against its own cap — 4 for a contact ladder, 3 re-presentations for a mandate"
+      },
+      {
+        "held": true,
+        "claim": "0 unmasked identifiers in any stored payload",
+        "detail": "Phone, email and instrument numbers masked before storage · the masked path list is derived from the values, and this counts rows where it disagrees with them"
+      }
+    ]
+  },
+  "exceptions": [
+    {
+      "key": "exhausted",
+      "note": "Four contacts, no payment, no reply worth another. The agent stopped because it was told to, not because it ran out of ideas.",
+      "cases": 66,
+      "reason": "Attempt cap reached",
+      "sample": [
+        {
+          "id": "C-4387",
+          "type": "INVOICE_OVERDUE",
+          "cause": "CUSTOMER_DISTRACTED",
+          "simIndex": 5,
+          "amountPaise": 8415200
+        },
+        {
+          "id": "C-4380",
+          "type": "INVOICE_OVERDUE",
+          "cause": "CUSTOMER_DISTRACTED",
+          "simIndex": 89,
+          "amountPaise": 8168700
+        },
+        {
+          "id": "C-4445",
+          "type": "INVOICE_OVERDUE",
+          "cause": "CUSTOMER_DISTRACTED",
+          "simIndex": 202,
+          "amountPaise": 4028300
+        }
+      ],
+      "atRiskPaise": 66625300
+    },
+    {
+      "key": "escalated",
+      "note": "Hardship, a dispute, a concession or a weak diagnosis put the case in front of a person, and it was still there when the horizon closed.",
+      "cases": 20,
+      "reason": "Waiting on a human",
+      "sample": [
+        {
+          "id": "C-4358",
+          "type": "INVOICE_OVERDUE",
+          "cause": "UNKNOWN",
+          "simIndex": 33,
+          "amountPaise": 9119200
+        },
+        {
+          "id": "C-4371",
+          "type": "PAYMENT_FAILED",
+          "cause": "UNKNOWN",
+          "simIndex": 108,
+          "amountPaise": 8831300
+        },
+        {
+          "id": "C-4443",
+          "type": "INVOICE_OVERDUE",
+          "cause": "UNKNOWN",
+          "simIndex": 164,
+          "amountPaise": 7048000
+        }
+      ],
+      "atRiskPaise": 43126900
+    },
+    {
+      "key": "opt_out",
+      "note": "STOP received. Every channel closed for that customer, permanently — the one rule that cannot be switched off.",
+      "cases": 15,
+      "reason": "Customer opted out",
+      "sample": [
+        {
+          "id": "C-4463",
+          "type": "INVOICE_OVERDUE",
+          "cause": "CUSTOMER_DISTRACTED",
+          "simIndex": 81,
+          "amountPaise": 6909700
+        },
+        {
+          "id": "C-4434",
+          "type": "PAYMENT_FAILED",
+          "cause": "BANK_GATEWAY_DEGRADED",
+          "simIndex": 42,
+          "amountPaise": 2595600
+        },
+        {
+          "id": "C-4364",
+          "type": "PAYMENT_FAILED",
+          "cause": "CARD_EXPIRED",
+          "simIndex": 135,
+          "amountPaise": 1124000
+        }
+      ],
+      "atRiskPaise": 15213200
+    },
+    {
+      "key": "human_closed",
+      "note": "A merchant refused the escalation, or approved a stand-down offer that is sent once and followed by nothing. The agent was told to stop, and it stopped.",
+      "cases": 4,
+      "reason": "A person ended it",
+      "sample": [
+        {
+          "id": "C-4457",
+          "type": "PAYMENT_FAILED",
+          "cause": "INSUFFICIENT_FUNDS",
+          "simIndex": 92,
+          "amountPaise": 2452000
+        },
+        {
+          "id": "C-4480",
+          "type": "CHECKOUT_ABANDONED",
+          "cause": "CUSTOMER_DISTRACTED",
+          "simIndex": 187,
+          "amountPaise": 1801400
+        },
+        {
+          "id": "C-4404",
+          "type": "INVOICE_OVERDUE",
+          "cause": "CUSTOMER_DISTRACTED",
+          "simIndex": 62,
+          "amountPaise": 1460600
+        }
+      ],
+      "atRiskPaise": 6718900
+    },
+    {
+      "key": "in_flight",
+      "note": "Inside its bounds and still being worked when the ten-day window closed. Reported as unfinished rather than counted as a loss.",
+      "cases": 3,
+      "reason": "Still in flight at the horizon",
+      "sample": [
+        {
+          "id": "C-4551",
+          "type": "MANDATE_FAILED",
+          "cause": "BANK_GATEWAY_DEGRADED",
+          "simIndex": 21,
+          "amountPaise": 455900
+        },
+        {
+          "id": "C-4526",
+          "type": "MANDATE_FAILED",
+          "cause": "INSUFFICIENT_FUNDS",
+          "simIndex": 52,
+          "amountPaise": 88300
+        },
+        {
+          "id": "C-4521",
+          "type": "MANDATE_FAILED",
+          "cause": "BANK_GATEWAY_DEGRADED",
+          "simIndex": 167,
+          "amountPaise": 32300
+        }
+      ],
+      "atRiskPaise": 576500
+    },
+    {
+      "key": "sentiment",
+      "note": "The reply read as hostile or distressed, so the agent stood down and handed the case to a person.",
+      "cases": 2,
+      "reason": "Negative sentiment · halted",
+      "sample": [
+        {
+          "id": "C-4449",
+          "type": "PAYMENT_FAILED",
+          "cause": "BANK_GATEWAY_DEGRADED",
+          "simIndex": 93,
+          "amountPaise": 390200
+        },
+        {
+          "id": "C-4391",
+          "type": "CHECKOUT_ABANDONED",
+          "cause": "INSUFFICIENT_FUNDS",
+          "simIndex": 168,
+          "amountPaise": 44000
+        }
+      ],
+      "atRiskPaise": 434200
+    }
+  ],
+  "escalations": {
+    "total": 54,
+    "decided": 54,
+    "pending": 0,
+    "approved": 45,
+    "rejected": 9,
+    "concessionPaise": 177708,
+    "releasedValuePaise": 117479600,
+    "medianLatencySeconds": 7200,
+    "postApprovalRecoveryRate": 0.5603994225380406,
+    "recoveredAfterApprovalPaise": 65835500
+  },
+  "stoppingRules": [
+    {
+      "key": "quiet_hours",
+      "rule": "Quiet hours · 21:00–09:00 IST",
+      "fired": 370,
+      "effect": "Contact deferred to 09:00 · silent retries exempt",
+      "derived": true,
+      "terminal": false
+    },
+    {
+      "key": "cool_down",
+      "rule": "Cool-down · 20h between contacts",
+      "fired": 2,
+      "effect": "Contact deferred · never two nudges in one afternoon",
+      "derived": true,
+      "terminal": false
+    },
+    {
+      "key": "channel_cap",
+      "rule": "Per-channel cap · max 1 voice call",
+      "fired": 39,
+      "effect": "Fell back to the next cheapest channel",
+      "derived": true,
+      "terminal": false
+    },
+    {
+      "key": "mandate_cap",
+      "rule": "Mandate re-presentation · 3 per cycle, spaced",
+      "fired": 0,
+      "effect": "Held to the next billing cycle · RBI e-mandate discipline",
+      "derived": true,
+      "terminal": false
+    },
+    {
+      "key": "confidence_floor",
+      "rule": "Confidence floor · 0.60",
+      "fired": 19,
+      "effect": "Escalated to a human instead of guessing a cause",
+      "derived": true,
+      "terminal": false
+    },
+    {
+      "key": "attempt_cap",
+      "rule": "Attempt cap · 4 per case, 3 for mandates",
+      "fired": 65,
+      "effect": "Closed EXHAUSTED with the reason written to the ledger",
+      "derived": true,
+      "terminal": true
+    },
+    {
+      "key": "opt_out",
+      "rule": "Opt-out keyword · STOP, UNSUBSCRIBE, Hindi equivalents",
+      "fired": 15,
+      "effect": "HALTED on every channel, permanently, for that customer",
+      "locked": true,
+      "derived": true,
+      "terminal": true
+    },
+    {
+      "key": "sentiment",
+      "rule": "Negative-sentiment halt",
+      "fired": 2,
+      "effect": "HALTED and handed to a human",
+      "derived": true,
+      "terminal": true
+    },
+    {
+      "key": "deadline",
+      "rule": "Deadline expiry",
+      "fired": 1,
+      "effect": "Closed EXHAUSTED · stale debts are never chased",
+      "derived": true,
+      "terminal": true
+    },
+    {
+      "key": "override",
+      "rule": "Human override · refused escalation or approved stand-down",
+      "fired": 4,
+      "effect": "Agent stood down · the decision and its reason are in the ledger",
+      "derived": true,
+      "terminal": true
+    }
+  ]
+}

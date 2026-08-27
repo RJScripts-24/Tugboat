@@ -1,4 +1,9 @@
-import type { LlmDriver, LlmRequest, LlmResponse } from "./llm-driver.interface";
+import {
+  LLM_TIMEOUT_MS,
+  type LlmDriver,
+  type LlmRequest,
+  type LlmResponse,
+} from "./llm-driver.interface";
 
 const ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 
@@ -47,6 +52,7 @@ export class GroqDriver implements LlmDriver {
         max_tokens: request.maxTokens ?? 1024,
         response_format: { type: "json_object" },
       }),
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
     });
 
     if (!response.ok) {

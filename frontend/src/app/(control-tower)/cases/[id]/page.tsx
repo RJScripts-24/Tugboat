@@ -2,16 +2,14 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { CaseView } from "@/components/case/case-view";
-import { getChainTip } from "@/lib/audit-data";
-import { getCaseDetail, getCaseNeighbours } from "@/lib/case-detail-data";
-import { POLICY_VERSION } from "@/lib/policies-data";
-import { CASE_TYPE_META, getPipelineCases } from "@/lib/pipeline-data";
+import { CASE_TYPE_META } from "@/lib/pipeline-data";
+import { getCaseDetail, getPolicies } from "@/lib/queries";
 
 type Params = { params: Promise<{ id: string }> };
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { id } = await params;
-  const detail = getCaseDetail(id);
+  const detail = await getCaseDetail(id);
   if (!detail) return { title: `${id} — Tugboat`, robots: { index: false, follow: false } };
 
   return {
@@ -21,28 +19,33 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 /**
- * Case Detail (PRD 6.3, page 4) - the money page.
+ * Case Detail (PRD 6.3, page 4) — the money page.
  *
- * The case is read on the server and handed down whole, exactly as
- * `GET /cases/:id` will hand it down: the record, its events, its bounds, its
- * ledger rows. Every id in the seeded batch resolves; an id that is not in the
- * batch still 404s, because a page that answers for any URL is its own kind of
- * lie.
+ * `GET /cases/:id` hands down the case whole: the record, its events, the work
+ * still scheduled on it, its bounds against the pack in force, and its own
+ * ledger chain. An id that is not a case still 404s, because a page that
+ * answers for any URL is its own kind of lie.
+ *
+ * The two lists that used to be honestly empty are real now. `pending` is the
+ * case's scheduled `actions` rows, which is what lets the timeline be read as a
+ * plan rather than only as a history — and every one of them still has to pass
+ * the gate when its job fires, which is why the node says so. `audit` is this
+ * case's chain, so the digests beside the timeline and the digests in the Audit
+ * Explorer are one set of rows read twice.
  */
 export default async function CaseDetailPage({ params }: Params) {
   const { id } = await params;
-  const detail = getCaseDetail(id);
+
+  const detail = await getCaseDetail(id);
   if (!detail) notFound();
+
+  const { version } = await getPolicies();
 
   return (
     <CaseView
       detail={detail}
-      neighbours={getCaseNeighbours(id)}
-      batchSize={getPipelineCases().length}
-      // Where this case's chain ends in the ledger, so an override appended in
-      // the browser continues it rather than starting a second one.
-      tip={getChainTip(id)}
-      policyVersion={POLICY_VERSION}
+      neighbours={detail.neighbours}
+      policyVersion={version}
     />
   );
 }

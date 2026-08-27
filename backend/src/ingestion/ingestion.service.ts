@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 
 import { DetectorService } from "../agent-core/detector.service";
@@ -9,7 +9,10 @@ import { ExecutorService } from "../agent-core/executor.service";
 import { isUniqueViolation } from "../cases/case-events.service";
 import { CasesService } from "../cases/cases.service";
 import { toCaseRef } from "../common/case-ref";
+import { ClockService } from "../common/clock.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { ACTION_QUEUE, type ActionQueue } from "../queue/action-queue.interface";
+import { cancelCaseWork } from "../queue/cancel-case-work";
 import type { SimEventDto } from "./dto/sim-event.dto";
 import type { NormalizedEvent } from "./normalized-event";
 
@@ -31,7 +34,25 @@ export type IngestOutcome =
   | { status: "accepted"; caseId: number; caseRef: string; diagnosis?: DiagnosisSummary }
   | { status: "duplicate"; caseRef: string | null }
   | { status: "ignored"; reason: string }
-  | { status: "recorded"; outcome: "success" };
+  | { status: "recorded"; outcome: "success" }
+  | { status: "recovered"; caseId: number; caseRef: string; amountPaise: number };
+
+/** A payment landing against a case that is already open. */
+export type PaymentArrival = {
+  eventId: string;
+  /** The Razorpay object the case was opened from. Either this or caseId. */
+  originId?: string;
+  caseId?: number;
+  amountPaise: number;
+  at?: Date;
+  /** The provider-side payment id, printed on the timeline. */
+  reference: string;
+  /** How the money arrived, for the timeline row. */
+  via?: string;
+  raw?: unknown;
+  /** Who delivered it: the simulator in a batch, Razorpay through the webhook (Stage 10). */
+  source?: "simulator" | "razorpay";
+};
 
 @Injectable()
 export class IngestionService {
@@ -43,6 +64,8 @@ export class IngestionService {
     private readonly detector: DetectorService,
     private readonly diagnoser: DiagnoserService,
     private readonly executor: ExecutorService,
+    private readonly clock: ClockService,
+    @Inject(ACTION_QUEUE) private readonly queue: ActionQueue,
   ) {}
 
   /**
@@ -103,17 +126,29 @@ export class IngestionService {
         escalated: result.escalated,
       };
 
-      // PLAN AND ACT — queued, never inline. The webhook is answered as soon as
-      // the case exists; everything that contacts a customer happens on the
-      // queue, where it can be delayed, retried and cancelled. An escalated case
-      // is left alone: it is waiting on a person, not on a schedule.
-      if (!result.escalated) {
-        await this.executor.scheduleFirstStep(record.id);
-      }
     } catch (error) {
       this.logger.error(
         `Case ${toCaseRef(record.id)} opened but diagnosis failed: ${(error as Error).message}`,
       );
+    }
+
+    // PLAN AND ACT — queued, never inline. The webhook is answered as soon as
+    // the case exists; everything that contacts a customer happens on the
+    // queue, where it can be delayed, retried and cancelled. An escalated case
+    // is left alone: it is waiting on a person, not on a schedule.
+    if (diagnosis && !diagnosis.escalated) {
+      try {
+        await this.executor.scheduleFirstStep(record.id);
+      } catch (error) {
+        // The case is committed and the delivery is acknowledged; only the
+        // job is missing, and the reconciler puts it back (D-131). Said in
+        // its own words, because "diagnosis failed" sent the first outage
+        // investigation to the wrong module (B-57).
+        this.logger.error(
+          `Case ${toCaseRef(record.id)} opened but its first step could not be queued — ` +
+            `the reconciler will schedule it: ${(error as Error).message}`,
+        );
+      }
     }
 
     return { status: "accepted", caseId: record.id, caseRef: toCaseRef(record.id), diagnosis };
@@ -160,6 +195,116 @@ export class IngestionService {
     await this.detector.syncIncident(merchantId, input.at ?? new Date());
 
     return { status: "recorded", outcome: "success" };
+  }
+
+  /**
+   * The money arrived.
+   *
+   * Until this existed the only way a case could recover was a silent retry
+   * capturing — which meant every message the agent sent was, structurally,
+   * incapable of getting anything back. A customer paying from the link in a
+   * WhatsApp nudge is the ordinary case, not an edge one, and it arrives as a
+   * `payment.captured` webhook against the order the case was opened from.
+   * Stage 10 points the real webhook here; the simulator already does.
+   *
+   * Deduped on the event id like every other delivery, because a payment
+   * recorded twice is revenue counted twice, and that is the one arithmetic
+   * error an evidence report cannot survive.
+   */
+  async recordPayment(input: PaymentArrival): Promise<IngestOutcome> {
+    const claimed = await this.claim({
+      eventId: input.eventId,
+      source: input.source ?? "simulator",
+      eventType: "payment.captured",
+      raw: input.raw ?? input,
+    } as NormalizedEvent);
+
+    if (!claimed.proceed) {
+      return { status: "duplicate", caseRef: claimed.caseId ? toCaseRef(claimed.caseId) : null };
+    }
+
+    const record = input.caseId
+      ? await this.prisma.case.findUnique({ where: { id: input.caseId } })
+      : await this.prisma.case.findFirst({
+          where: { originId: input.originId, stage: { not: "recovered" } },
+          orderBy: { createdAt: "desc" },
+        });
+
+    if (!record) {
+      await this.prisma.webhookEvent.update({
+        where: { eventId: input.eventId },
+        data: { processedAt: this.clock.now() },
+      });
+      return { status: "ignored", reason: "No open case matches this payment" };
+    }
+
+    const merchantId = record.merchantId;
+    await this.detector.recordOutcome({ merchantId, success: true, at: input.at });
+
+    if (record.stage === "recovered") {
+      await this.prisma.webhookEvent.update({
+        where: { eventId: input.eventId },
+        data: { processedAt: this.clock.now(), caseId: record.id },
+      });
+      return { status: "duplicate", caseRef: toCaseRef(record.id) };
+    }
+
+    const at = input.at ?? this.clock.now();
+
+    await this.cases.transition(
+      record.id,
+      "recovered",
+      {
+        kind: "RECOVERED",
+        occurredAt: at,
+        title: `Recovered ${rupees(input.amountPaise)} rupees`,
+        summary: `${input.via ?? "Paid from the recovery link"} · ${input.reference}`,
+        badge: { label: "recovered", tone: "recovered" },
+        body: {
+          type: "facts",
+          rows: [
+            {
+              label: "Amount",
+              value: `${rupees(input.amountPaise)} rupees`,
+              mono: true,
+              tone: "recovered",
+            },
+            { label: "Payment", value: input.reference, mono: true },
+            { label: "Against", value: record.originId ?? "—", mono: true },
+            { label: "Arrived", value: input.via ?? "Recovery link" },
+            {
+              label: "Attempts used",
+              value: `${record.attemptsUsed} of ${record.attemptCap}`,
+              mono: true,
+            },
+          ],
+        } as unknown as Prisma.InputJsonValue,
+      },
+      { recoveredAmountPaise: input.amountPaise },
+    );
+
+    // A promise the customer actually kept is resolved by the payment, not by
+    // the follow-up job discovering it later.
+    await this.prisma.paymentPromise.updateMany({
+      where: { caseId: record.id, status: "PENDING" },
+      data: { status: "KEPT", resolvedAt: at },
+    });
+
+    await cancelCaseWork(this.queue, this.prisma, record.id);
+
+    await this.prisma.webhookEvent.update({
+      where: { eventId: input.eventId },
+      data: { processedAt: this.clock.now(), caseId: record.id },
+    });
+
+    this.logger.log(`${toCaseRef(record.id)} RECOVERED ${rupees(input.amountPaise)} rupees`);
+
+    return {
+      status: "recovered",
+      caseId: record.id,
+      caseRef: toCaseRef(record.id),
+      amountPaise: input.amountPaise,
+    };
   }
 
   /**
@@ -262,3 +407,6 @@ export class IngestionService {
     return merchant.id;
   }
 }
+
+const rupees = (paise: number) =>
+  new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(Math.round(paise / 100));

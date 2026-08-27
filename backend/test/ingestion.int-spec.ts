@@ -198,13 +198,15 @@ describe("Ingestion (integration)", () => {
 
     const before = await prisma.caseEvent.count({ where: { caseId: outcome.caseId } });
 
+    // Nobody has contacted this customer yet, so there is no conversation in
+    // which they could have promised anything.
     await expect(
-      cases.transition(outcome.caseId, "recovered", {
-        kind: "RECOVERED",
-        title: "Recovered",
+      cases.transition(outcome.caseId, "promised", {
+        kind: "PROMISE_RECORDED",
+        title: "Promised",
         summary: "should never be written",
       }),
-    ).rejects.toThrow(/diagnosed -> recovered/);
+    ).rejects.toThrow(/diagnosed -> promised/);
 
     const after = await prisma.case.findUniqueOrThrow({ where: { id: outcome.caseId } });
     expect(after.stage).toBe("diagnosed");
@@ -212,6 +214,31 @@ describe("Ingestion (integration)", () => {
     // The rollback matters as much as the rejection: a rejected transition must
     // not leave an event describing something that did not happen.
     expect(await prisma.caseEvent.count({ where: { caseId: outcome.caseId } })).toBe(before);
+  });
+
+  /**
+   * The counterpart to the test above, and the reason it had to change.
+   *
+   * This assertion used to read the other way: `diagnosed -> recovered` was the
+   * illegal transition the suite proved. D-83 reversed that deliberately — a
+   * payment link can be paid in the ninety seconds between detection and
+   * diagnosis, and a table that refused to record it would be refusing to
+   * record revenue — but this suite was never updated, so it went on asserting
+   * the opposite of the design until B-40 (`docs/BUILD-NOTES.md`).
+   */
+  it("accepts the money arriving, whatever stage the case had reached", async () => {
+    const event = paymentFailed();
+    const outcome = await ingestion.ingest(event);
+    if (outcome.status !== "accepted") throw new Error("expected the case to open");
+
+    await cases.transition(outcome.caseId, "recovered", {
+      kind: "RECOVERED",
+      title: "Recovered",
+      summary: "Paid from the link before anybody was contacted",
+    });
+
+    const after = await prisma.case.findUniqueOrThrow({ where: { id: outcome.caseId } });
+    expect(after.stage).toBe("recovered");
   });
 
   it("acknowledges an event type no playbook opens, without creating a case", async () => {

@@ -14,14 +14,16 @@ import type { CaseStage } from "@prisma/client";
  * Legal destinations for each stage.
  *
  * `recovered` is the only truly terminal stage — once the money has arrived
- * there is nothing further to decide. `halted` and `exhausted` are terminal for
- * the *agent* but still accept `recovered`, because a customer who opted out or
- * a case that hit its attempt cap can always pay anyway, and a state machine
- * that refused to record that would be refusing to record revenue.
+ * there is nothing further to decide. Every other stage accepts it, including
+ * the two that are terminal for the *agent*: a customer who opted out, a case
+ * that hit its attempt cap, and a payment that lands in the ninety seconds
+ * between detection and diagnosis can all still pay, and a state machine that
+ * refused to record that would be refusing to record revenue. The money
+ * arriving is the one transition this table may never decline.
  */
 const TRANSITIONS: Record<CaseStage, readonly CaseStage[]> = {
-  detected: ["diagnosed", "escalated", "halted"],
-  diagnosed: ["intervening", "escalated", "halted", "exhausted"],
+  detected: ["diagnosed", "escalated", "halted", "recovered"],
+  diagnosed: ["intervening", "escalated", "halted", "exhausted", "recovered"],
   intervening: ["waiting", "promised", "recovered", "escalated", "halted", "exhausted"],
   waiting: ["intervening", "promised", "recovered", "escalated", "halted", "exhausted"],
   escalated: ["intervening", "waiting", "recovered", "halted", "exhausted"],

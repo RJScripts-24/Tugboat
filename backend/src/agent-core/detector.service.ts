@@ -85,6 +85,42 @@ export class DetectorService {
   }
 
   /**
+   * Records many outcomes at once.
+   *
+   * A simulated batch needs a denominator: two hundred failures with no
+   * successes beside them describe a gateway that is permanently on fire, and
+   * every case would then be diagnosed as a degradation. Writing those
+   * background samples one row at a time is thousands of round trips for data
+   * nothing reads individually, so they go in one statement.
+   */
+  async recordOutcomes(
+    samples: {
+      merchantId: string;
+      success: boolean;
+      at: Date;
+      method?: string | null;
+      bank?: string | null;
+      simRunId?: string | null;
+    }[],
+  ): Promise<number> {
+    if (samples.length === 0) return 0;
+
+    const created = await this.prisma.paymentSample.createMany({
+      data: samples.map((sample) => ({
+        merchantId: sample.merchantId,
+        at: sample.at,
+        bucket: bucketFor(sample.at),
+        success: sample.success,
+        method: sample.method ?? undefined,
+        bank: sample.bank ?? undefined,
+        simRunId: sample.simRunId ?? undefined,
+      })),
+    });
+
+    return created.count;
+  }
+
+  /**
    * Compares the recent window against its own trailing baseline.
    *
    * A z-score answers "how unusual is this dip, in units of this gateway's own

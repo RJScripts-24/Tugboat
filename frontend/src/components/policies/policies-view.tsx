@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type ReactNode,
+} from "react";
 
 import { ChalkNote, ChalkRule } from "@/components/dashboard/chalk";
 import {
@@ -9,14 +18,13 @@ import {
   RetryIcon,
   ShieldCheckSmallIcon,
 } from "@/components/dashboard/icons";
-import type { ChainTip } from "@/lib/audit-data";
-import { appendEvent, policyVersionOf, useSessionEvents } from "@/lib/event-store";
+import { savePolicies } from "@/lib/actions";
 import {
   clonePack,
   diffPacks,
   DEFAULT_PACK,
   ESCALATION_GATES,
-  hashHex,
+  draftDigest,
   nextVersion,
   STOPPING_RULES,
   type PolicyPack,
@@ -41,11 +49,17 @@ type Toast = { id: number; title: string; detail: string };
  * would write is drafted on screen before anyone presses the button, and the
  * revision history includes a loosening that had to be reverted.
  *
- * Nothing is posted anywhere yet. `PUT /policies` does not exist, and the part
- * worth getting right first is the shape of what happens around it: the diff
- * against the pack in force, the direction each change went, the digest that
- * covers the entry, and the version bump that the shell picks up immediately.
- * When the endpoint lands, `save` is the only function that changes.
+ * A save is `PUT /policies`, and everything around it is the server's answer
+ * rather than this page's guess. The diff on screen before you press the button
+ * is a preview computed by `diffPacks` - the same function the API runs, which
+ * is why the preview and the recorded change agree - and the version number,
+ * the digest and the `POLICY_CHANGED` ledger row all come back from the write.
+ *
+ * The version in force used to be folded from a browser-side event log, because
+ * three surfaces held three copies of it and the Policies page could reach v6
+ * while the shell and the Audit Explorer still said v4. There is one copy now:
+ * the pack row in Postgres, which every page reads and the PolicyGate checks
+ * against on every action.
  */
 export function PoliciesView({
   pack: initial,
@@ -55,7 +69,6 @@ export function PoliciesView({
   queue,
   ledgerEntries,
   merchantName,
-  tip,
 }: {
   pack: PolicyPack;
   version: string;
@@ -66,49 +79,26 @@ export function PoliciesView({
   queue: Record<string, number>;
   ledgerEntries: number;
   merchantName: string;
-  /** Where the `policy` chain ends in the ledger. */
-  tip: ChainTip;
 }) {
   const [saved, setSaved] = useState<PolicyPack>(() => clonePack(initial));
   const [pack, setPack] = useState<PolicyPack>(() => clonePack(initial));
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   /*
-   * The version in force is folded from the ledger, not held here.
+   * The version in force, and the revisions behind it, come from the server.
    *
-   * It used to be `useState`, which is why the Policies page could reach v6
-   * while the shell and the Audit Explorer were still reporting v4: three
-   * surfaces, three copies, one of them updated. There is one copy now, and
-   * every page reads it.
+   * This used to be folded from a browser-side event log for a reason that
+   * still holds - a version kept in three `useState`s is a version three pages
+   * disagree about - and the fold is simply not needed once there is one row to
+   * read. `savePolicies` revalidates this page, so the number below changes
+   * because the pack changed, not because a component was told to change it.
    */
-  const session = useSessionEvents();
-  const version = policyVersionOf(session, initialVersion);
+  const version = initialVersion;
+  const revisions = initialRevisions;
 
-  /** Server revisions, plus anything saved this session - newest first. */
-  const revisions = useMemo(() => {
-    const appended: PolicyRevision[] = session
-      .filter((row) => row.action === "POLICY_CHANGED")
-      .map((row) => {
-        const payload = row.payload as {
-          version: string;
-          changed_by: string;
-          changes: string[];
-          summary?: string;
-        };
-        return {
-          version: payload.version,
-          hash: row.hash,
-          prevHash: row.prevHash,
-          actor: "HUMAN" as const,
-          by: payload.changed_by,
-          daysAgo: 0,
-          summary: payload.summary ?? "Saved from the Policies page",
-          changes: payload.changes,
-        };
-      })
-      .reverse();
-    return [...appended, ...initialRevisions];
-  }, [session, initialRevisions]);
+  const router = useRouter();
+  const [saving, startTransition] = useTransition();
+
   const nextToast = useRef(0);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -152,12 +142,9 @@ export function PoliciesView({
 
   const prevHash = revisions[0]?.hash ?? "0".repeat(10);
   const draftVersion = nextVersion(version);
+  // The digest the API would write, built from the API's own preimage (D-118).
   const draftHash = useMemo(
-    () =>
-      hashHex(
-        `${draftVersion}|${changes.map((c) => `${c.path}:${c.from}>${c.to}`).join(",")}|${prevHash}`,
-        10,
-      ),
+    () => draftDigest(draftVersion, changes, prevHash),
     [draftVersion, changes, prevHash],
   );
 
@@ -165,42 +152,45 @@ export function PoliciesView({
    * The save (PRD 6.3, page 7 - "every save writes a POLICY_CHANGED audit
    * entry"). The toast says so because a merchant who does not know their
    * change was recorded will make the next one carelessly.
+   *
+   * The version and the digest in the receipt are the ones the API cut, not the
+   * ones drafted above: a draft digest is a preview of a row that has not been
+   * written, and printing it as though it had been would be the one claim on
+   * this page that the ledger could not back up.
    */
   const save = useCallback(() => {
-    if (!dirty) return;
+    if (!dirty || saving) return;
 
-    const lines = changes.map((change) => `${change.path} ${change.from} → ${change.to}`);
-    const summary = summarise(changes);
-
-    // One write, to the ledger. The shell, the Audit Explorer and this page
-    // all read the result of it rather than being told about it separately.
-    const row = appendEvent({
-      chain: "policy",
-      caseId: null,
-      actor: "HUMAN",
-      action: "POLICY_CHANGED",
-      detail: summary,
-      tip,
-      payload: {
-        version: draftVersion,
-        previous_version: version,
-        changed_by: merchantName,
-        summary,
-        changes: lines,
-        fields: lines.length,
-      },
-    });
-
-    setSaved(clonePack(pack));
-
+    const attempted = changes.length;
     const looser = changes.filter((change) => change.direction === "looser").length;
-    pushToast({
-      title: `Saved as policy ${draftVersion} · POLICY_CHANGED written`,
-      detail: `${changes.length} field${changes.length === 1 ? "" : "s"}${
-        looser > 0 ? `, ${looser} of them looser` : ""
-      } · ledger entry ${row.hash} · in force on the next planned action`,
+    const submitted = clonePack(pack);
+
+    startTransition(async () => {
+      const result = await savePolicies(submitted);
+
+      if (!result.ok) {
+        pushToast({
+          title: "The pack was not saved",
+          detail: result.error,
+        });
+        return;
+      }
+
+      // The server's pack, not the one that was sent: `opt_out` cannot be
+      // disabled and a rejected field comes back as it stands (D-49), so the
+      // baseline the diff runs against has to be what was actually stored.
+      setSaved(clonePack(result.data.pack));
+      setPack(clonePack(result.data.pack));
+      router.refresh();
+
+      pushToast({
+        title: `Saved as policy ${result.data.version} \u00b7 POLICY_CHANGED written`,
+        detail: `${attempted} field${attempted === 1 ? "" : "s"}${
+          looser > 0 ? `, ${looser} of them looser` : ""
+        } \u00b7 in force on the next planned action`,
+      });
     });
-  }, [changes, dirty, draftVersion, merchantName, pack, pushToast, tip, version]);
+  }, [changes, dirty, pack, pushToast, router, saving]);
 
   const reset = useCallback(() => {
     setPack(clonePack(DEFAULT_PACK));
@@ -390,19 +380,6 @@ export function PoliciesView({
 }
 
 /* ------------------------------------------------------------------ */
-
-/**
- * A revision's one-line summary, written from the change that matters most.
- *
- * A loosening leads if there is one: reading a history six months later, the
- * question is never "what changed", it is "when did we widen something".
- */
-function summarise(changes: { label: string; direction: string; to: string }[]): string {
-  const lead = changes.find((change) => change.direction === "looser") ?? changes[0];
-  const rest = changes.length - 1;
-  const head = `${lead.label} → ${lead.to}`;
-  return rest === 0 ? head : `${head}, and ${rest} other ${rest === 1 ? "field" : "fields"}`;
-}
 
 /* ------------------------------------------------------------------ */
 

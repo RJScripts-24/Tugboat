@@ -8,6 +8,7 @@ import type { ApprovalGate, Prisma } from "@prisma/client";
 import { AgentWorker } from "../src/agent-core/agent-worker";
 import { ExecutorService } from "../src/agent-core/executor.service";
 import { AppModule } from "../src/app.module";
+import { ClockService } from "../src/common/clock.service";
 import { CasesService } from "../src/cases/cases.service";
 import { ApprovalsService } from "../src/approvals/approvals.service";
 import { OPT_OUT_LINE } from "../src/channels/message-copy";
@@ -15,6 +16,7 @@ import { InboundService } from "../src/conversation/inbound.service";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { ACTION_QUEUE } from "../src/queue/action-queue.interface";
 import { InlineActionQueue } from "../src/queue/inline-action-queue";
+import { daylightIt } from "./daytime-clock";
 import { purgeLedgerForCases } from "./ledger-maintenance";
 
 /**
@@ -38,8 +40,12 @@ describe("Approvals (integration)", () => {
   let cases: CasesService;
   let queue: InlineActionQueue;
   let inbound: InboundService;
+  let clock: ClockService;
   let merchantId: string;
   let merchantName: string;
+
+  // Every test that expects a contact runs in daylight; see ./daytime-clock.
+  const itd = daylightIt(() => clock);
 
   const startedAt = new Date();
 
@@ -148,6 +154,7 @@ describe("Approvals (integration)", () => {
     cases = app.get(CasesService);
     inbound = app.get(InboundService);
     queue = app.get(ACTION_QUEUE);
+    clock = app.get(ClockService);
 
     const merchant = await prisma.merchant.findFirst({ orderBy: { createdAt: "asc" } });
     if (!merchant) throw new Error("No merchant seeded — run `npm run db:seed` first.");
@@ -179,7 +186,7 @@ describe("Approvals (integration)", () => {
   /* ---------------------------------------------------------------- */
 
   describe("a gate that refuses raises a card a human can answer", () => {
-    it("stops the case and writes the request in one pass", async () => {
+    itd("stops the case and writes the request in one pass", async () => {
       const { caseId, approvalId } = await escalatedCase("b2b_high_value");
 
       const record = await prisma.case.findUniqueOrThrow({ where: { id: caseId } });
@@ -194,7 +201,7 @@ describe("Approvals (integration)", () => {
       expect(approval.headline).toContain("₹42,000");
     });
 
-    it("holds the blocked action as a real row, not an implied one", async () => {
+    itd("holds the blocked action as a real row, not an implied one", async () => {
       const { caseId } = await escalatedCase("b2b_high_value");
 
       const action = await prisma.action.findFirstOrThrow({ where: { caseId } });
@@ -203,7 +210,7 @@ describe("Approvals (integration)", () => {
       expect(action.executedAt).toBeNull();
     });
 
-    it("carries the exact message that would have gone out", async () => {
+    itd("carries the exact message that would have gone out", async () => {
       const { approvalId } = await escalatedCase("discount_requires_approval");
 
       const approval = await prisma.approval.findUniqueOrThrow({ where: { id: approvalId } });
@@ -215,7 +222,7 @@ describe("Approvals (integration)", () => {
       expect(draft.to).toBe("96•••••210");
     });
 
-    it("raises one card when the same escalation is replayed", async () => {
+    itd("raises one card when the same escalation is replayed", async () => {
       const { caseId } = await escalatedCase("confidence_below_threshold");
 
       // A redelivered step re-runs the gate and escalates again.
@@ -225,7 +232,7 @@ describe("Approvals (integration)", () => {
       expect(await prisma.approval.count({ where: { caseId } })).toBe(1);
     });
 
-    it("leaves a re-escalated case escalated rather than mid-intervention", async () => {
+    itd("leaves a re-escalated case escalated rather than mid-intervention", async () => {
       // A step plans before it gates, which moves an escalated case back to
       // `intervening`. The escalation that follows used to read the stage it
       // had loaded before that move and take the append-only branch, leaving a
@@ -237,7 +244,7 @@ describe("Approvals (integration)", () => {
       expect(record.stage).toBe("escalated");
     });
 
-    it("does not raise a card for an escalation no merchant can answer", async () => {
+    itd("does not raise a card for an escalation no merchant can answer", async () => {
       const caseId = await openCase();
       const promise = await prisma.paymentPromise.create({
         data: {
@@ -260,7 +267,7 @@ describe("Approvals (integration)", () => {
   /* ---------------------------------------------------------------- */
 
   describe("approve → the gate runs again, then the case resumes", () => {
-    it("records the decision, releases the send, and reopens the case", async () => {
+    itd("records the decision, releases the send, and reopens the case", async () => {
       const { caseId, approvalId } = await escalatedCase("b2b_high_value");
 
       const { approval } = await approvals.approve(merchantId, approvalId, { by: merchantName });
@@ -281,7 +288,7 @@ describe("Approvals (integration)", () => {
       expect(action.channelRef).toMatch(/^re_[0-9a-f]{14}$/);
     });
 
-    it("replays on the case timeline in the order it happened", async () => {
+    itd("replays on the case timeline in the order it happened", async () => {
       const { caseId, approvalId } = await escalatedCase("b2b_high_value");
       await approvals.approve(merchantId, approvalId, { by: merchantName });
       await queue.drain();
@@ -296,7 +303,7 @@ describe("Approvals (integration)", () => {
       ]);
     });
 
-    it("names the human and the response time on the timeline entry", async () => {
+    itd("names the human and the response time on the timeline entry", async () => {
       const { caseId, approvalId } = await escalatedCase("b2b_high_value");
       await approvals.approve(merchantId, approvalId, { by: merchantName });
 
@@ -311,7 +318,7 @@ describe("Approvals (integration)", () => {
       expect(body.rows.find((row) => row.label === "Audited as")?.value).toContain("HUMAN");
     });
 
-    it("writes a second policy check — the approved action is checked again", async () => {
+    itd("writes a second policy check — the approved action is checked again", async () => {
       const { caseId, approvalId } = await escalatedCase("b2b_high_value");
       await approvals.approve(merchantId, approvalId, { by: merchantName });
       await queue.drain();
@@ -328,7 +335,7 @@ describe("Approvals (integration)", () => {
       expect(gate?.note).toContain(merchantName);
     });
 
-    it("sends the approver's edit, not the copy it was derived from", async () => {
+    itd("sends the approver's edit, not the copy it was derived from", async () => {
       const { caseId, approvalId } = await escalatedCase("discount_requires_approval");
 
       await approvals.approve(merchantId, approvalId, {
@@ -349,7 +356,7 @@ describe("Approvals (integration)", () => {
       expect(body.lines[0]).toBe("Hi Ananya — one-off, we can do 12% off.");
     });
 
-    it("restores an opt-out line the approver deleted rather than refusing the edit", async () => {
+    itd("restores an opt-out line the approver deleted rather than refusing the edit", async () => {
       const { caseId, approvalId } = await escalatedCase("discount_requires_approval");
 
       const { draftEdited } = await approvals.approve(merchantId, approvalId, {
@@ -374,7 +381,7 @@ describe("Approvals (integration)", () => {
       );
     });
 
-    it("sends a stand-down once and closes the case", async () => {
+    itd("sends a stand-down once and closes the case", async () => {
       const { caseId, approvalId } = await escalatedCase("hardship_language");
       await approvals.approve(merchantId, approvalId, { by: merchantName });
       await queue.drain();
@@ -387,7 +394,7 @@ describe("Approvals (integration)", () => {
       expect(queue.pending().filter((job) => job.caseId === caseId)).toHaveLength(0);
     });
 
-    it("refuses a second decision on a request already answered", async () => {
+    itd("refuses a second decision on a request already answered", async () => {
       const { approvalId } = await escalatedCase("b2b_high_value");
       await approvals.approve(merchantId, approvalId, { by: merchantName });
 
@@ -396,7 +403,7 @@ describe("Approvals (integration)", () => {
       ).rejects.toThrow(/already approved/);
     });
 
-    it("does not send twice when the release job is redelivered", async () => {
+    itd("does not send twice when the release job is redelivered", async () => {
       const { caseId, approvalId } = await escalatedCase("b2b_high_value");
       await approvals.approve(merchantId, approvalId, { by: merchantName });
 
@@ -412,7 +419,7 @@ describe("Approvals (integration)", () => {
   /* ---------------------------------------------------------------- */
 
   describe("an approval does not override the bounds that protect a person", () => {
-    it("halts instead of sending when the customer opted out after approving", async () => {
+    itd("halts instead of sending when the customer opted out after approving", async () => {
       const { caseId, approvalId } = await escalatedCase("b2b_high_value");
       await approvals.approve(merchantId, approvalId, { by: merchantName });
 
@@ -433,7 +440,7 @@ describe("Approvals (integration)", () => {
       expect(await prisma.action.count({ where: { caseId, status: "EXECUTED" } })).toBe(0);
     });
 
-    it("does not release onto a case that closed while the request was waiting", async () => {
+    itd("does not release onto a case that closed while the request was waiting", async () => {
       const { caseId, approvalId } = await escalatedCase("b2b_high_value");
       await approvals.approve(merchantId, approvalId, { by: merchantName });
 
@@ -448,7 +455,7 @@ describe("Approvals (integration)", () => {
   /* ---------------------------------------------------------------- */
 
   describe("reject → the agent stands down", () => {
-    it("closes the case and records the reason a merchant gave", async () => {
+    itd("closes the case and records the reason a merchant gave", async () => {
       const { caseId, approvalId } = await escalatedCase("b2b_high_value");
 
       const decided = await approvals.reject(merchantId, approvalId, {
@@ -472,7 +479,7 @@ describe("Approvals (integration)", () => {
       ]);
     });
 
-    it("leaves no scheduled work behind on a case a human closed", async () => {
+    itd("leaves no scheduled work behind on a case a human closed", async () => {
       const { caseId, approvalId } = await escalatedCase("confidence_below_threshold");
       await approvals.reject(merchantId, approvalId, {
         by: merchantName,
@@ -487,7 +494,7 @@ describe("Approvals (integration)", () => {
       expect(record.stage).toBe("halted");
     });
 
-    it("marks the blocked action refused rather than leaving it pending forever", async () => {
+    itd("marks the blocked action refused rather than leaving it pending forever", async () => {
       const { caseId, approvalId } = await escalatedCase("b2b_high_value");
       await approvals.reject(merchantId, approvalId, {
         by: merchantName,
@@ -499,7 +506,7 @@ describe("Approvals (integration)", () => {
       expect(action.failureReason).toContain(merchantName);
     });
 
-    it("carries on with the standard playbook when only a concession was refused", async () => {
+    itd("carries on with the standard playbook when only a concession was refused", async () => {
       const { caseId, approvalId } = await escalatedCase("discount_requires_approval");
 
       await approvals.reject(merchantId, approvalId, {
@@ -515,7 +522,7 @@ describe("Approvals (integration)", () => {
       expect(await timeline(caseId)).toContain("WHATSAPP_SENT");
     });
 
-    it("needs a reason", async () => {
+    itd("needs a reason", async () => {
       const { approvalId } = await escalatedCase("b2b_high_value");
 
       await expect(
@@ -527,7 +534,7 @@ describe("Approvals (integration)", () => {
   /* ---------------------------------------------------------------- */
 
   describe("the queue, the history and the numbers over them", () => {
-    it("orders the queue by money at risk, not by arrival", async () => {
+    itd("orders the queue by money at risk, not by arrival", async () => {
       const small = await escalatedCase("b2b_high_value");
       await prisma.approval.update({
         where: { id: small.approvalId },
@@ -545,7 +552,7 @@ describe("Approvals (integration)", () => {
       expect(mine.map((row) => row.id)).toEqual([large.approvalId, small.approvalId]);
     });
 
-    it("serves the reject dialog's own reasons with the request", async () => {
+    itd("serves the reject dialog's own reasons with the request", async () => {
       const { approvalId } = await escalatedCase("hardship_language");
       const request = (await approvals.pending(merchantId)).find((row) => row.id === approvalId);
 
@@ -553,7 +560,7 @@ describe("Approvals (integration)", () => {
       expect(request?.rejectionReasons.join(" ").toLowerCase()).not.toContain("margin");
     });
 
-    it("moves a request from the queue to the history when it is answered", async () => {
+    itd("moves a request from the queue to the history when it is answered", async () => {
       const { approvalId } = await escalatedCase("b2b_high_value");
 
       expect((await approvals.pending(merchantId)).some((row) => row.id === approvalId)).toBe(true);
@@ -569,7 +576,7 @@ describe("Approvals (integration)", () => {
       expect((await approvals.history(merchantId)).some((row) => row.id === approvalId)).toBe(true);
     });
 
-    it("computes the stats from the rows rather than storing them", async () => {
+    itd("computes the stats from the rows rather than storing them", async () => {
       const before = await approvals.stats(merchantId);
 
       const { approvalId } = await escalatedCase("b2b_high_value");
@@ -591,7 +598,7 @@ describe("Approvals (integration)", () => {
       expect(after.releasedValuePaise).toBe(before.releasedValuePaise);
     });
 
-    it("counts a merchant's own approvals only", async () => {
+    itd("counts a merchant's own approvals only", async () => {
       const stranger = await prisma.merchant.create({
         data: {
           email: `stranger-${RUN}@example.test`,
@@ -610,7 +617,7 @@ describe("Approvals (integration)", () => {
       }
     });
 
-    it("refuses to decide another merchant's request", async () => {
+    itd("refuses to decide another merchant's request", async () => {
       const stranger = await prisma.merchant.create({
         data: {
           email: `outsider-${RUN}@example.test`,

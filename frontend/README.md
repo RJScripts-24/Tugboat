@@ -6,18 +6,35 @@ AI revenue recovery agent (Razorpay AI Buildathon, Track 03). See
 
 ## Run
 
+The Control Tower is API-backed: start the backend first (`cd ../backend && npm run dev`,
+see `../backend/.env.example`), then:
+
 ```bash
+cp .env.local.example .env.local   # API_URL + NEXT_PUBLIC_API_URL, both http://localhost:4000 by default
 npm install
 npm run dev      # http://localhost:3000
 npm run build && npm run start
 ```
 
+Sign in with the seeded demo merchant (`demo@tugboat.dev` / `tugboat-demo`) or the
+"Try the demo" door — both are real logins against the API; the session is an
+httpOnly cookie set by the Next route (`src/app/api/auth/login/route.ts`).
+
 ## What is built
 
 | Route | Status |
 |---|---|
-| `/` | Landing page — replica of `design/landing.png`, hero illustration replaced by looping video |
-| `/login` | Not built yet (header "Login" already points here; PRD §6.3 page 1) |
+| `/` | Landing page — replica of `design/landing.png`, hero illustration replaced by looping video; the KPI band reads `GET /simulations/headline` |
+| `/login` | Sign-in (credentials or demo) — proxies to the API and sets the session cookie |
+| `/dashboard` | Control Tower — KPIs, funnel, live Boa activity feed, root causes, gateway health, working list |
+| `/cases`, `/cases/[id]` | Recovery Pipeline and Case Detail (timeline, bounds, ledger, manual overrides) |
+| `/approvals` | Approvals Queue — pending cards, history, stats |
+| `/simulation` | Simulation Lab — configure, watch a real batch run over the socket, read the evidence report |
+| `/policies` | Policies & Guardrails — the pack in force, revisions, firing counts |
+| `/audit` | Audit Explorer — the hash-chained ledger, verified in the browser |
+
+Which endpoints and socket events each page uses, and where its state lives, is
+recorded page by page in `../docs/FRONTEND-MAP.md`.
 
 ## Structure
 

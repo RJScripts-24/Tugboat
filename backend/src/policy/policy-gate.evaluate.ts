@@ -46,6 +46,8 @@ export type GateSubject = {
   diagnosisConfidence: number | null;
   segment: CustomerSegment;
   optedOutAt: Date | null;
+  /** Set while a merchant has taken this case off the agent from the Control Tower. */
+  pausedAt: Date | null;
   lastSentiment: Sentiment | null;
   lastSentimentScore: number | null;
   hardshipFlaggedAt: Date | null;
@@ -53,6 +55,24 @@ export type GateSubject = {
   lastContactAt: Date | null;
   lastRepresentationAt: Date | null;
   representationsThisCycle: number;
+  /**
+   * Escalation gates a human has already answered yes to, on this case.
+   *
+   * Only the two *routing* gates can appear here. "Yes, work this account" and
+   * "yes, act on that diagnosis" are decisions about the case, and re-asking
+   * them on every rung of the ladder is asking the same person the same
+   * question four times — the objection D-66 already makes within one action,
+   * applied across the case. The other two gates are about a specific thing
+   * being offered or said and are asked every time, because the answer to
+   * "may I give this customer 10% off" is not the answer to "may I give them
+   * 10% off again".
+   *
+   * Without this, a B2B case asked the merchant again on every rung of the
+   * ladder: a 214-case batch raised a hundred requests, and four asks at an
+   * 88% approval rate meant two cases in five were eventually closed by a no
+   * they had already survived (B-31).
+   */
+  clearedGates: readonly ApprovalGate[];
 };
 
 export type GateAction = {
@@ -124,6 +144,7 @@ export function evaluateGate(
     channelCap(subject, action.channel, label, pack),
     coolDown(subject, at, silent, pack),
     optOut(subject),
+    humanPause(subject),
     sentimentHalt(subject, pack, policyVersion),
     escalationGate(subject, action, pack),
     channelEnabled(action.channel, label, pack, policyVersion),
@@ -338,6 +359,40 @@ function optOut(subject: GateSubject): Step {
   };
 }
 
+/**
+ * A merchant holding the case themselves.
+ *
+ * A refusal rather than a halt, and the distinction is the whole point: a halt
+ * closes the case, and a pause is something a person can take back. So the
+ * action is refused, the case keeps its stage, and the next check after a
+ * resume finds nothing here. It sits below the opt-out deliberately — if both
+ * are true, the customer's STOP is what the timeline should say stopped this,
+ * not the merchant's pause.
+ */
+function humanPause(subject: GateSubject): Step {
+  if (subject.pausedAt) {
+    return {
+      check: {
+        name: "Human override",
+        verdict: "block",
+        note: "Paused from the Control Tower — the agent is standing down until a human resumes it",
+      },
+      outcome: {
+        kind: "refuse",
+        reason: "Paused by the merchant — no action until this case is resumed",
+      },
+    };
+  }
+
+  return {
+    check: {
+      name: "Human override",
+      verdict: "pass",
+      note: "Not paused — the agent is working this case",
+    },
+  };
+}
+
 function sentimentHalt(subject: GateSubject, pack: PolicyPack, version: string): Step {
   if (!pack.rules.sentiment) {
     return {
@@ -382,6 +437,12 @@ function sentimentHalt(subject: GateSubject, pack: PolicyPack, version: string):
 }
 
 function escalationGate(subject: GateSubject, action: GateAction, pack: PolicyPack): Step {
+  /** A routing question a human has already answered on this case. */
+  const routingCleared = (gate: ApprovalGate, note: string): Step | null =>
+    subject.clearedGates.includes(gate)
+      ? { check: { name: "Escalation gate", verdict: "skip", note } }
+      : null;
+
   const concession = action.concessionPaise ?? 0;
   const discountPercent = action.discountPercent ?? 0;
   const { discountCapPercent, valueThresholdPaise, b2bAlways, confidenceFloor, hardship } =
@@ -454,6 +515,12 @@ function escalationGate(subject: GateSubject, action: GateAction, pack: PolicyPa
   }
 
   if (subject.diagnosisConfidence !== null && subject.diagnosisConfidence < confidenceFloor) {
+    const cleared = routingCleared(
+      "confidence_below_threshold",
+      "A human has already acted on this diagnosis · not asked again",
+    );
+    if (cleared) return cleared;
+
     return {
       check: {
         name: "Escalation gate",
@@ -466,6 +533,14 @@ function escalationGate(subject: GateSubject, action: GateAction, pack: PolicyPa
         reason: `Confidence ${subject.diagnosisConfidence.toFixed(2)} below the ${confidenceFloor.toFixed(2)} floor`,
       },
     };
+  }
+
+  if (subject.amountPaise > valueThresholdPaise || (b2bAlways && subject.segment === "B2B")) {
+    const cleared = routingCleared(
+      "b2b_high_value",
+      "A human has already agreed this account may be worked · not asked again",
+    );
+    if (cleared) return cleared;
   }
 
   if (subject.amountPaise > valueThresholdPaise) {

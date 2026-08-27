@@ -10,6 +10,7 @@ import { DetectorService } from "./detector.service";
 import { DiagnoserService } from "./diagnoser.service";
 import { ExecutorService } from "./executor.service";
 import { PlannerService } from "./planner.service";
+import { WorkReconcilerService } from "./work-reconciler.service";
 
 /**
  * The five-stage pipeline as separate injectable services (ADR-4).
@@ -25,6 +26,7 @@ import { PlannerService } from "./planner.service";
     PlannerService,
     ExecutorService,
     AgentWorker,
+    WorkReconcilerService,
   ],
   exports: [CaseStateMachine, DetectorService, DiagnoserService, PlannerService, ExecutorService],
 })

@@ -7,17 +7,23 @@
  * object; the PolicyGate reads it; the Evidence Report counts how often each
  * field stopped something. Three different views of one record.
  *
- * Shaped like `GET /policies` and the body of `PUT /policies` (PRD 7.5), so
- * wiring the NestJS module in later replaces the body of `getPolicyPack` and
- * nothing else. Money is in paise throughout, matching the schema; times of
- * day are minutes past midnight IST, because "21:00" is a rendering of a
- * number and not the number itself.
+ * `GET /policies` returns the pack in force, its version, and every revision
+ * that led to it; `PUT /policies` validates a submitted pack, diffs it, cuts a
+ * new version and writes a `POLICY_CHANGED` row on the ledger's policy chain.
+ * Money is in paise throughout, matching the schema; times of day are minutes
+ * past midnight IST, because "21:00" is a rendering of a number and not the
+ * number itself.
  *
- * The defaults here are not invented for this page. They are the same values
- * the Case Detail bounds panel reports, the same thresholds the Approvals
- * Queue names when it explains a gate, and the same rules the Simulation Lab
- * counts firings against - a policy page that disagreed with the enforcement
- * everywhere else would be the most expensive kind of demo bug.
+ * The pack no longer has a copy here. It used to, and the note above it said
+ * the values were "the same values the Case Detail bounds panel reports, the
+ * same thresholds the Approvals Queue names" — which was true because somebody
+ * kept them true. There is one pack now, the PolicyGate reads it on every
+ * check, and a page that disagreed with the enforcement would have to disagree
+ * with the row the enforcement read.
+ *
+ * `DEFAULT_PACK` survives, and only as what "Reset to defaults" restores: the
+ * shipped v4 constants, which are a starting point rather than a claim about
+ * what is in force.
  */
 
 import { CHANNEL_META, type Channel } from "@/lib/case-detail-data";
@@ -74,13 +80,13 @@ export type PolicyPack = {
 };
 
 /**
- * Policy v4 - what is in force on the seeded batch.
+ * The shipped v4 constants — what "Reset to defaults" restores.
  *
- * Frozen so a component cannot mutate the saved baseline by editing a nested
- * object it was handed: the page compares against this to decide what is
- * unsaved, and a baseline that drifts makes the diff lie.
+ * Built fresh on every call so a component cannot mutate the baseline by
+ * editing a nested object it was handed: the page compares against a baseline
+ * to decide what is unsaved, and a baseline that drifts makes the diff lie.
  */
-export function getPolicyPack(): PolicyPack {
+export function shippedDefaults(): PolicyPack {
   return {
     contact: {
       maxAttempts: 4,
@@ -115,10 +121,18 @@ export function getPolicyPack(): PolicyPack {
   };
 }
 
-/** "Reset to defaults" restores the shipped pack, which is also v4. */
-export const DEFAULT_PACK: PolicyPack = getPolicyPack();
+/** "Reset to defaults" restores the shipped pack. */
+export const DEFAULT_PACK: PolicyPack = shippedDefaults();
 
-export const POLICY_VERSION = "v4";
+/**
+ * The version the pack shipped as.
+ *
+ * Kept only as the label for those defaults. What is *in force* is whatever
+ * `GET /policies` says, which is why every page that prints a version now takes
+ * it from the server rather than importing a constant — the bug that constant
+ * caused is documented in the note on the Policies page's own version fold.
+ */
+export const SHIPPED_VERSION = "v4";
 
 /** A deep copy, so an editor never writes through to the baseline it diffs against. */
 export function clonePack(pack: PolicyPack): PolicyPack {
@@ -469,64 +483,34 @@ export type PolicyRevision = {
 };
 
 /**
- * Every POLICY_CHANGED entry on the ledger, newest first.
+ * Every `POLICY_CHANGED` entry on the ledger, newest first.
  *
  * The history is the claim this page is really making. A configurable rule that
- * nobody can prove was configured is a rule you have to take on trust; four
- * hash-chained rows saying who changed which field, when, and from what, is a
- * rule you can audit. v2 is deliberately a loosening that was reverted - a
- * history in which every change was an improvement is a history somebody wrote
- * afterwards.
+ * nobody can prove was configured is a rule you have to take on trust; a
+ * hash-chained list saying who changed which field, when, and from what, is a
+ * rule you can audit. The chain is computed by the API from the stored
+ * versions — this page displays it and does not mint it.
  */
-export function getRevisions(): PolicyRevision[] {
-  const rows: Omit<PolicyRevision, "hash" | "prevHash">[] = [
-    {
-      version: "v4",
-      actor: "HUMAN",
-      by: "Demo Merchant",
-      daysAgo: 4,
-      summary: "Voice capped at one call per case",
-      changes: [
-        "contact.channelCaps.VOICE 2 → 1",
-        "mandate.alignToPayday off → on",
-      ],
-    },
-    {
-      version: "v3",
-      actor: "HUMAN",
-      by: "Demo Merchant",
-      daysAgo: 9,
-      summary: "Reverted v2 — the cool-down goes back to 20h",
-      changes: ["contact.coolDownHours 6h → 20h", "contact.maxAttempts 6 → 4"],
-    },
-    {
-      version: "v2",
-      actor: "HUMAN",
-      by: "Demo Merchant",
-      daysAgo: 11,
-      summary: "Loosened for a weekend push — three complaints in two days",
-      changes: ["contact.coolDownHours 20h → 6h", "contact.maxAttempts 4 → 6"],
-    },
-    {
-      version: "v1",
-      actor: "SYSTEM",
-      by: "Tugboat",
-      daysAgo: 16,
-      summary: "Shipped defaults — quiet hours, attempt caps, opt-out locked on",
-      changes: ["policy pack created"],
-    },
-  ];
+export type PolicyResponse = {
+  version: string;
+  pack: PolicyPack;
+  revisions: PolicyRevision[];
+};
 
-  // Chained oldest to newest, then reversed: a digest that does not cover the
-  // row before it is a timestamp with extra steps.
-  const chained: PolicyRevision[] = [];
-  let prev = "0".repeat(10);
-  for (const row of [...rows].reverse()) {
-    const hash = hashHex(`${row.version}|${row.changes.join(",")}|${prev}`, 10);
-    chained.push({ ...row, hash, prevHash: prev });
-    prev = hash;
-  }
-  return chained.reverse();
+/**
+ * The digest a `POLICY_CHANGED` row would carry, previewed before the save.
+ *
+ * Byte for byte the preimage the API builds (`chainHash` in
+ * `policy.service.ts`): version, the rendered changes joined by commas, and the
+ * previous row's digest. That equality is the point — the Policies page shows
+ * the entry a save *would* write, and a preview that would not match the row
+ * actually written is the one claim an audit-adjacent page cannot afford to
+ * get wrong. Rendered changes use the same `path from → to` spelling on both
+ * sides (D-118).
+ */
+export function draftDigest(version: string, changes: PolicyChange[], prevHash: string): string {
+  const rendered = changes.map((change) => `${change.path} ${change.from} → ${change.to}`);
+  return hashHex(`${version}|${rendered.join(",")}|${prevHash}`, 10);
 }
 
 /** FNV-1a, widened to a hex digest. The same shape the case ledger uses. */

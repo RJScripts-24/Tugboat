@@ -7,7 +7,6 @@ import { useEffect, useState } from "react";
 
 import { SignOutIcon } from "@/components/dashboard/icons";
 import { usePendingApprovals } from "@/lib/approvals-live";
-import { usePolicyVersion } from "@/lib/event-store";
 import { ChalkRule } from "@/components/dashboard/chalk";
 import { NAV, titleFor } from "./nav";
 
@@ -31,7 +30,11 @@ export function TopBar({
   const waiting = usePendingApprovals(pendingApprovals);
   // Folded from the event log, so the header, the Policies page and the
   // ledger cannot disagree about which pack is in force.
-  const policy = usePolicyVersion(policyVersion);
+  // The version in force, straight from the shell's own read of `GET /policies`.
+  // This used to be folded from a browser-side event log, because the Policies
+  // page held its own copy and the two disagreed after a save; there is one
+  // copy now, and a save revalidates the layout that reads it.
+  const policy = policyVersion;
 
   return (
     // Above 61: globals lift every control onto the board so the tooth layer

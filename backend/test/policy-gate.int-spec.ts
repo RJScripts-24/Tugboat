@@ -123,7 +123,7 @@ describe("PolicyGate (integration)", () => {
       // Which rules governed this decision is not recoverable later unless it
       // is written down now (ADR-12).
       expect(row.policyVersionId).toBe(activeVersionId);
-      expect(row.checks).toHaveLength(9);
+      expect(row.checks).toHaveLength(10);
     });
 
     it("writes the timeline entry the Case Detail page renders", async () => {
@@ -135,7 +135,7 @@ describe("PolicyGate (integration)", () => {
         orderBy: { seq: "desc" },
       });
 
-      expect(event.title).toBe("Policy check — 9/9 passed");
+      expect(event.title).toBe("Policy check — 10/10 passed");
       expect(event.summary).toContain("cleared email");
       expect(event.body).toMatchObject({ type: "policy" });
 
@@ -305,6 +305,9 @@ describe("PolicyGate (integration)", () => {
         where: { merchantId, version: before.version },
         data: { isActive: true },
       });
+      // The active pack is cached in memory and invalidated by `save`; this
+      // restore goes around the service, so it has to say so.
+      policy.invalidateActive(merchantId);
     });
 
     it("refuses to switch opt-out off", async () => {

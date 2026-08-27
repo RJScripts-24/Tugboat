@@ -2,11 +2,9 @@ import { Injectable } from "@nestjs/common";
 
 import type { GatePass } from "../policy/gate-pass";
 import type { ChannelAdapter, ChannelSendResult, SendRequest } from "./channel-adapter.interface";
+import { CHANNEL_COST_PAISE } from "./channel-costs";
 import { emailMessageId, payLink, seededUnit } from "./channel-refs";
 import { emailCopy } from "./message-copy";
-
-/** Resend's free tier costs nothing; this is what the same volume would cost paid. */
-const EMAIL_COST_PAISE = 8;
 
 @Injectable()
 export class SimulatedEmailAdapter implements ChannelAdapter {
@@ -25,7 +23,7 @@ export class SimulatedEmailAdapter implements ChannelAdapter {
     return {
       channelRef: emailMessageId(pass.caseId, request.attempt),
       mode: this.mode,
-      costPaise: EMAIL_COST_PAISE,
+      costPaise: CHANNEL_COST_PAISE.EMAIL,
       detail: {
         kind: "message",
         channel: "EMAIL",

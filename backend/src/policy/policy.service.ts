@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 
 import { AuditWriterService } from "../audit/audit-writer.service";
 import { isUniqueViolation } from "../cases/case-events.service";
+import { DomainEventsService } from "../common/domain-events.service";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   diffPacks,
@@ -54,9 +55,25 @@ export class PolicyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditWriterService,
+    private readonly domain: DomainEventsService,
   ) {}
 
+  /**
+   * The pack in force, held in memory between writes.
+   *
+   * Every gate check, every plan and every follow-up reads this, which on a
+   * two-hundred-case batch is several thousand identical queries for a row that
+   * changes only when a merchant edits the policy. The cache is dropped by
+   * `update` rather than expiring on a timer: a stale guardrail is the one kind
+   * of stale data this system must never serve, and a version-based
+   * invalidation is exact where a TTL is a guess.
+   */
+  private readonly activeCache = new Map<string, ActivePolicy>();
+
   async getActive(merchantId: string): Promise<ActivePolicy> {
+    const cached = this.activeCache.get(merchantId);
+    if (cached) return cached;
+
     const version = await this.prisma.policyVersion.findFirst({
       where: { merchantId, isActive: true },
       orderBy: { createdAt: "desc" },
@@ -66,7 +83,19 @@ export class PolicyService {
       throw new NotFoundException({ error: "No active policy pack for this merchant." });
     }
 
-    return { id: version.id, version: version.version, pack: version.pack as PolicyPack };
+    const active: ActivePolicy = {
+      id: version.id,
+      version: version.version,
+      pack: version.pack as PolicyPack,
+    };
+
+    this.activeCache.set(merchantId, active);
+    return active;
+  }
+
+  /** Called wherever the active version changes, so the next read goes to the row. */
+  invalidateActive(merchantId: string): void {
+    this.activeCache.delete(merchantId);
   }
 
   /**
@@ -125,7 +154,7 @@ export class PolicyService {
     }
 
     const created = await this.withVersionRetry(merchantId, async (version) =>
-      this.prisma.$transaction(async (tx) => {
+      this.prisma.transaction(async (tx) => {
         await tx.policyVersion.updateMany({
           where: { merchantId, isActive: true },
           data: { isActive: false },
@@ -170,11 +199,21 @@ export class PolicyService {
       }),
     );
 
+    // Before the log line and before the caller returns: the next gate check
+    // must read the pack that was just cut, not the one it replaced.
+    this.invalidateActive(merchantId);
+
     this.logger.log(
       `Policy ${active.version} → ${created.version} by ${actor} · ${changes
         .map(renderChange)
         .join(" · ")}`,
     );
+
+    // Every open Control Tower is printing the old version in its top bar and
+    // beside every bound on the Policies page. This is the one event the
+    // gateway forwards that changes what a *rule* says rather than what a case
+    // did, so it goes to every page rather than to the dashboard's own room.
+    this.domain.publish({ name: "policy.changed", merchantId, version: created.version });
 
     return { version: created.version, pack, changes, unchanged: false };
   }

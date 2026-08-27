@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
+import { LiveRefresh } from "@/components/dashboard/live-refresh";
 import { PipelineView } from "@/components/pipeline/pipeline-view";
-import { getPipelineCases } from "@/lib/pipeline-data";
+import { getPipelineCases } from "@/lib/queries";
 
 export const metadata: Metadata = {
   title: "Recovery Pipeline — Tugboat",
@@ -12,16 +13,20 @@ export const metadata: Metadata = {
 /**
  * Recovery Pipeline (PRD 6.3, page 3).
  *
- * The batch is read on the server and handed down whole; the view is a client
- * component because filtering, sorting and paging all live in the URL and have
- * to feel instant. When `GET /cases` exists this page passes it the query
- * instead - the props do not change.
+ * The batch is read from `GET /cases` on the server and handed down whole; the
+ * view is a client component because filtering, sorting and paging all live in
+ * the URL and have to feel instant, and a round trip per checkbox is not
+ * instant. The stage pills move because `<LiveRefresh>` re-runs this function
+ * when a case transitions — the props do not change shape for it.
  */
-export default function PipelinePage() {
+export default async function PipelinePage() {
+  const cases = await getPipelineCases();
+
   return (
     // useSearchParams needs a boundary to suspend at during prerender.
     <Suspense fallback={<PipelineSkeleton />}>
-      <PipelineView cases={getPipelineCases()} />
+      <LiveRefresh />
+      <PipelineView cases={cases} />
     </Suspense>
   );
 }

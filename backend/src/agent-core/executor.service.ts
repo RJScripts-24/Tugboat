@@ -5,7 +5,7 @@ import { APPROVAL_CLOSES, ApprovalsService } from "../approvals/approvals.servic
 import type { DraftMessage } from "../approvals/ask-builder";
 import {
   CHANNEL_ADAPTERS,
-  CHANNEL_MODE_LABEL,
+  channelModeLabel,
   type ChannelAdapter,
   type ChannelSendResult,
   type MessageDetail,
@@ -16,6 +16,7 @@ import {
 import { isUniqueViolation } from "../cases/case-events.service";
 import { CasesService } from "../cases/cases.service";
 import { toCaseRef } from "../common/case-ref";
+import { ClockService } from "../common/clock.service";
 import { PolicyGateService } from "../policy/policy-gate.service";
 import type { PolicyChannel } from "../policy/policy-pack";
 import { PolicyService } from "../policy/policy.service";
@@ -74,6 +75,11 @@ type GatePassOf = NonNullable<Awaited<ReturnType<PolicyGateService["check"]>>["p
 export type StepOptions = {
   counterpart?: VoiceCounterpart;
   /**
+   * Whether a silent retry captures. Only the simulator answers this, because
+   * only it knows the true cause and the customer's actual balance.
+   */
+  captured?: boolean;
+  /**
    * Refuse to run if the case has already moved past this attempt. Set from the
    * queued job, so a redelivery is a no-op rather than an extra contact.
    */
@@ -91,6 +97,7 @@ export class ExecutorService {
     private readonly gate: PolicyGateService,
     private readonly policy: PolicyService,
     private readonly approvals: ApprovalsService,
+    private readonly clock: ClockService,
     @Inject(CHANNEL_ADAPTERS) private readonly adapters: Map<string, ChannelAdapter>,
     @Inject(ACTION_QUEUE) private readonly queue: ActionQueue,
   ) {}
@@ -177,7 +184,11 @@ export class ExecutorService {
 
       await this.recordPlan(record, plan);
 
-      const verdict = await this.gate.check(caseId, { channel: plan.channel });
+      const verdict = await this.gate.check(caseId, {
+        channel: plan.channel,
+        concessionPaise: plan.concessionPaise,
+        discountPercent: plan.discountPercent,
+      });
 
       if (verdict.outcome.kind === "allow") {
         return this.execute(
@@ -207,13 +218,16 @@ export class ExecutorService {
             reason,
             expectAttempt: record.attemptsUsed,
           },
-          { delayMs: Math.max(0, until.getTime() - Date.now()) },
+          { delayMs: Math.max(0, until.getTime() - this.clock.nowMs()) },
         );
         return { kind: "deferred", until, reason };
       }
 
       if (verdict.outcome.kind === "approve") {
-        return this.escalate(record, verdict.outcome.reason, verdict.outcome.gate, plan.channel);
+        return this.escalate(record, verdict.outcome.reason, verdict.outcome.gate, plan.channel, {
+          concessionPaise: plan.concessionPaise,
+          discountPercent: plan.discountPercent,
+        });
       }
 
       if (verdict.outcome.kind === "halt") {
@@ -251,7 +265,7 @@ export class ExecutorService {
     if (!claim.proceed) return { kind: "skipped", reason: claim.reason };
 
     const copy = this.planner.copyContext(record, customer, merchantName, plan.attempt);
-    const promiseDate = new Date(Date.now() + PROMISE_HORIZON_MS);
+    const promiseDate = new Date(this.clock.nowMs() + PROMISE_HORIZON_MS);
 
     let result: ChannelSendResult;
     try {
@@ -261,6 +275,7 @@ export class ExecutorService {
         to: contactFor(plan.channel, customer),
         copy,
         counterpart: options.counterpart,
+        captured: options.captured,
         promiseDateLabel: dayLabel(promiseDate),
       });
     } catch (error) {
@@ -271,7 +286,7 @@ export class ExecutorService {
       where: { id: claim.action.id },
       data: {
         status: "EXECUTED",
-        executedAt: new Date(),
+        executedAt: this.clock.now(),
         channelRef: result.channelRef,
         costPaise: result.costPaise,
         payload: result.detail as unknown as Prisma.InputJsonValue,
@@ -420,7 +435,7 @@ export class ExecutorService {
     if (detail.kind === "voice" && detail.intent === "HARDSHIP_DECLARED") {
       await this.cases.transition(record.id, "escalated", voiceEvent(customer, result, detail), {
         ...spend,
-        hardshipFlaggedAt: new Date(),
+        hardshipFlaggedAt: this.clock.now(),
       });
       await this.cases.appendEvent(
         record.id,
@@ -441,7 +456,7 @@ export class ExecutorService {
           ? voiceEvent(customer, result, detail)
           : messageEvent(record, customer, plan, result, detail);
 
-    await this.cases.transition(record.id, "waiting", event, spend);
+    await this.cases.settle(record.id, "waiting", event, spend);
     await this.scheduleFollowUp(record, plan.channel);
 
     return { kind: "sent", channel: plan.channel, channelRef: result.channelRef, stage: "waiting" };
@@ -471,7 +486,10 @@ export class ExecutorService {
         type: "promise",
         amountPaise: record.amountPaise,
         dateLabel: dayLabel(promiseDate),
-        daysAway: Math.max(1, Math.round((promiseDate.getTime() - Date.now()) / 86_400_000)),
+        daysAway: Math.max(
+          1,
+          Math.round((promiseDate.getTime() - this.clock.nowMs()) / 86_400_000),
+        ),
         rows: [
           { label: "Amount", value: `${inr(record.amountPaise)} rupees`, mono: true },
           { label: "Promised for", value: dayLabel(promiseDate), mono: true },
@@ -492,7 +510,7 @@ export class ExecutorService {
         reason: `Promised ${inr(record.amountPaise)} rupees for ${dayLabel(promiseDate)}`,
         promiseId: promise.id,
       },
-      { delayMs: Math.max(0, promiseDate.getTime() - Date.now()) },
+      { delayMs: Math.max(0, promiseDate.getTime() - this.clock.nowMs()) },
     );
   }
 
@@ -510,14 +528,14 @@ export class ExecutorService {
     if (promise.case.stage === "recovered") {
       await this.prisma.paymentPromise.update({
         where: { id: promiseId },
-        data: { status: "KEPT", resolvedAt: new Date() },
+        data: { status: "KEPT", resolvedAt: this.clock.now() },
       });
       return { kind: "skipped", reason: "Promise kept — the case had already recovered" };
     }
 
     await this.prisma.paymentPromise.update({
       where: { id: promiseId },
-      data: { status: "BROKEN", resolvedAt: new Date() },
+      data: { status: "BROKEN", resolvedAt: this.clock.now() },
     });
 
     // A broken promise is not another nudge. Somebody said a date and it
@@ -585,7 +603,7 @@ export class ExecutorService {
       approvedBy: {
         gate: approval.gate,
         by: approval.decidedBy ?? "a merchant",
-        at: approval.decidedAt ?? new Date(),
+        at: approval.decidedAt ?? this.clock.now(),
       },
     });
 
@@ -600,7 +618,7 @@ export class ExecutorService {
           reason,
           approvalId: approval.id,
         },
-        { delayMs: Math.max(0, until.getTime() - Date.now()) },
+        { delayMs: Math.max(0, until.getTime() - this.clock.nowMs()) },
       );
       return { kind: "deferred", until, reason };
     }
@@ -672,6 +690,8 @@ export class ExecutorService {
         },
       ],
       delayMs: 0,
+      concessionPaise: 0,
+      discountPercent: 0,
       source: "playbook",
     };
 
@@ -707,7 +727,7 @@ export class ExecutorService {
         where: { id: approval.actionId },
         data: {
           status: "EXECUTED",
-          executedAt: new Date(),
+          executedAt: this.clock.now(),
           channelRef: result.channelRef,
           costPaise: result.costPaise,
           payload: result.detail as unknown as Prisma.InputJsonValue,
@@ -756,7 +776,7 @@ export class ExecutorService {
       );
     }
 
-    await this.cases.transition(record.id, "waiting", event, spend);
+    await this.cases.settle(record.id, "waiting", event, spend);
     await this.scheduleFollowUp(record, draft.channel);
 
     return {
@@ -786,6 +806,7 @@ export class ExecutorService {
     reason: string,
     gate: ApprovalGate | null,
     channel?: PolicyChannel,
+    concession: { concessionPaise?: number; discountPercent?: number } = {},
   ): Promise<StepOutcome> {
     // Read the stage now rather than trusting the copy this step began with:
     // `recordPlan` has already moved an escalated case back to `intervening` on
@@ -804,7 +825,23 @@ export class ExecutorService {
     }
 
     if (gate) {
-      await this.approvals.raise({ caseId: record.id, gate, channel: channel ?? "WHATSAPP" });
+      await this.approvals.raise({
+        caseId: record.id,
+        gate,
+        channel: channel ?? "WHATSAPP",
+        concessionPaise: concession.concessionPaise || undefined,
+        discountPercent: concession.discountPercent || undefined,
+      });
+    }
+
+    // The objection has now been put to a human. Clearing the flag is what
+    // stops the planner asking the same question on every later rung — the ask
+    // has been made, and whatever the answer is, it is theirs.
+    if (gate === "discount_requires_approval") {
+      await this.prisma.case.update({
+        where: { id: record.id },
+        data: { discountRequestedAt: null },
+      });
     }
 
     return { kind: "escalated", reason };
@@ -893,11 +930,14 @@ function retryEvent(
         : "Silent retry executed",
     summary: detail.captured
       ? `Captured ${inr(record.amountPaise)} rupees · ${result.channelRef}`
-      : `Declined again · ${detail.failureReason}`,
-    badge: {
-      label: detail.captured ? "captured" : "failed",
-      tone: detail.captured ? "recovered" : "halted",
-    },
+      : detail.awaiting
+        ? `${detail.awaiting} · ${result.channelRef}`
+        : `Declined again · ${detail.failureReason}`,
+    badge: detail.captured
+      ? { label: "captured", tone: "recovered" }
+      : detail.awaiting
+        ? { label: "awaiting capture", tone: "waiting" }
+        : { label: "failed", tone: "halted" },
     body: {
       type: "facts",
       rows: [
@@ -905,13 +945,14 @@ function retryEvent(
         { label: "Against", value: record.originId ?? "—", mono: true },
         {
           label: "Result",
-          value: detail.captured ? "captured" : "failed",
+          value: detail.captured ? "captured" : detail.awaiting ? "awaiting webhook" : "failed",
           mono: true,
-          tone: detail.captured ? "recovered" : "halted",
+          tone: detail.captured ? "recovered" : detail.awaiting ? "waiting" : "halted",
         },
+        ...(detail.link ? [{ label: "Payment link", value: detail.link, mono: true }] : []),
         { label: "Gateway latency", value: `${detail.gatewayLatencyMs} ms`, mono: true },
         { label: "Customer contacted", value: "No — silent retry" },
-        { label: "Mode", value: CHANNEL_MODE_LABEL.RETRY },
+        { label: "Mode", value: channelModeLabel("RETRY", result.mode) },
       ],
     } as unknown as Prisma.InputJsonValue,
   };
@@ -941,7 +982,7 @@ function messageEvent(
       rows: [
         { label: "To", value: to, mono: true },
         ...(detail.template ? [{ label: "Template", value: detail.template, mono: true }] : []),
-        { label: "Provider", value: CHANNEL_MODE_LABEL[detail.channel] },
+        { label: "Provider", value: channelModeLabel(detail.channel, result.mode) },
         { label: "Message id", value: result.channelRef, mono: true },
         { label: "Status", value: detail.status, mono: true },
         { label: "Cost", value: `${(result.costPaise / 100).toFixed(2)} rupees`, mono: true },
@@ -962,8 +1003,10 @@ function voiceEvent(customer: Customer, result: ChannelSendResult, detail: Voice
       transcript: detail.transcript,
       summary: detail.summary,
       intent: detail.intent,
+      audioUrl: detail.audioUrl ?? null,
       rows: [
         { label: "To", value: customer.maskedPhone ?? "—", mono: true },
+        ...(detail.recording ? [{ label: "Recording", value: detail.recording }] : []),
         { label: "Language", value: detail.language, mono: true },
         { label: "Dialogue", value: `${detail.turnsFromModel} turns from the model`, mono: true },
         { label: "Call id", value: result.channelRef, mono: true },

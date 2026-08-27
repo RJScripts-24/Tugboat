@@ -45,6 +45,18 @@ export type ChainVerdictView = {
   digests: { browser: string; server: string };
 };
 
+/** Matches the frontend's `LedgerSummary`. */
+export type LedgerSummaryView = {
+  entries: number;
+  chains: number;
+  cases: number;
+  byActor: Record<LedgerActor, number>;
+  actions: { action: string; count: number }[];
+  oldestMs: number;
+  newestMs: number;
+  maskedRows: number;
+};
+
 export type AuditFilters = {
   caseId?: number;
   chain?: string;
@@ -86,6 +98,33 @@ export class AuditService {
   }
 
   /** The tip of each chain, so an appended row continues the log rather than starting a second one. */
+  /**
+   * One case's own chain, in the shape the Case Detail audit panel renders.
+   *
+   * A separate read from `list` because the panel wants a different projection:
+   * ascending by sequence (a chain is read forwards), and `minutesAgo` rather
+   * than a timestamp, because the whole page is written in relative time. The
+   * rows themselves are the same rows — this is a view, not a second store.
+   */
+  async forCase(merchantId: string, caseId: number) {
+    const rows = await this.prisma.auditLedger.findMany({
+      where: { merchantId, chain: toCaseRef(caseId) },
+      orderBy: { seq: "asc" },
+    });
+
+    const now = Date.now();
+
+    return rows.map((row) => ({
+      seq: row.seq,
+      hash: row.hash,
+      prevHash: row.prevHash,
+      actor: row.actor,
+      action: row.action,
+      minutesAgo: Math.max(0, Math.round((now - row.at.getTime()) / 60_000)),
+      detail: row.detail,
+    }));
+  }
+
   async tips(merchantId: string): Promise<Record<string, { hash: string; seq: number }>> {
     const rows = await this.prisma.auditLedger.findMany({
       where: { merchantId },
@@ -102,8 +141,16 @@ export class AuditService {
     return tips;
   }
 
-  async summary(merchantId: string) {
-    const [entries, chains, actors] = await Promise.all([
+  /**
+   * The Explorer's header figures, counted over the whole ledger.
+   *
+   * Every one of these is a count rather than a page of rows summed in the
+   * browser. The distinction matters on this page more than anywhere else: a
+   * header that said "2,000 entries" because that is how many rows the table
+   * had loaded would be an audit surface understating the size of the audit.
+   */
+  async summary(merchantId: string): Promise<LedgerSummaryView> {
+    const [entries, chains, actors, actions, cases, masked, oldest, newest] = await Promise.all([
       this.prisma.auditLedger.count({ where: { merchantId } }),
       this.prisma.auditLedger.findMany({
         where: { merchantId },
@@ -115,12 +162,49 @@ export class AuditService {
         where: { merchantId },
         _count: { _all: true },
       }),
+      this.prisma.auditLedger.groupBy({
+        by: ["action"],
+        where: { merchantId },
+        _count: { _all: true },
+      }),
+      this.prisma.auditLedger.findMany({
+        where: { merchantId, caseId: { not: null } },
+        distinct: ["caseId"],
+        select: { caseId: true },
+      }),
+      // Rows that carry at least one masked path. Postgres has no "array is
+      // non-empty" filter in Prisma's generated API, so this asks the question
+      // the other way round and subtracts.
+      this.prisma.auditLedger.count({ where: { merchantId, masked: { isEmpty: true } } }),
+      this.prisma.auditLedger.findFirst({
+        where: { merchantId },
+        orderBy: { at: "asc" },
+        select: { at: true },
+      }),
+      this.prisma.auditLedger.findFirst({
+        where: { merchantId },
+        orderBy: { at: "desc" },
+        select: { at: true },
+      }),
     ]);
 
     const byActor: Record<LedgerActor, number> = { BOA: 0, POLICY: 0, HUMAN: 0, SYSTEM: 0 };
     for (const row of actors) byActor[row.actor] = row._count._all;
 
-    return { entries, chains: chains.length, byActor };
+    const now = Date.now();
+
+    return {
+      entries,
+      chains: chains.length,
+      cases: cases.length,
+      byActor,
+      actions: actions
+        .map((row) => ({ action: row.action, count: row._count._all }))
+        .sort((a, b) => b.count - a.count || a.action.localeCompare(b.action)),
+      oldestMs: oldest?.at.getTime() ?? now,
+      newestMs: newest?.at.getTime() ?? now,
+      maskedRows: entries - masked,
+    };
   }
 
   /**

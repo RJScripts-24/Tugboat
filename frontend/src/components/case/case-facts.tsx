@@ -11,13 +11,12 @@ import {
   MandateIcon,
 } from "@/components/dashboard/icons";
 import { MoneyValue, Section, StatusMark } from "@/components/dashboard/primitives";
+import { formatSpan, stampOf } from "@/lib/clock";
 import {
   CASE_TYPE_META,
   CHANNEL_META,
   ROOT_CAUSE_META,
   STAGE_META,
-  formatSpan,
-  stampOf,
   type CaseDetail,
   type CaseType,
 } from "@/lib/case-detail-data";

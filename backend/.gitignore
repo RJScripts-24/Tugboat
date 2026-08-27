@@ -10,3 +10,6 @@ coverage/
 *.log
 npm-debug.log*
 .DS_Store
+
+# Scratch space for one-off scripts and run logs; never committed.
+.tmp/

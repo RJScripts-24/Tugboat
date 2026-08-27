@@ -1,65 +1,34 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+
 
 import { ACTOR_TONE, TONE_HEX, type ActivityEntry } from "@/lib/dashboard-data";
+import { useActivityFeed } from "@/lib/live";
 import { Section } from "./primitives";
-
-const MAX_ENTRIES = 40;
-const STEP_MS = 3800;
 
 /**
  * Boa's event stream (PRD 6.3, page 2).
  *
  * An operational log, not a notification feed: fixed-width timestamp, actor,
- * what happened, and the technical detail underneath - error codes, confidence
- * values, policy versions, payment ids. That second line is the whole point.
- * A log that only says "message sent" is decoration; one that says which
- * payment link, on which attempt, against which cap, is evidence.
+ * what happened, and the technical detail underneath — error codes, confidence
+ * values, policy versions, payment ids. That second line is the whole point. A
+ * log that only says "message sent" is decoration; one that says which payment
+ * link, on which attempt, against which cap, is evidence.
  *
- * Stands in for the `activity.new` Socket.IO room: the effect below steps
- * through the rest of the seeded run so the log breathes during the demo. When
- * the gateway lands it becomes a subscription and nothing else here changes.
+ * The lines are real now. `seed` is the last forty case events the server read
+ * back through the same mapper the socket uses, and `activity.new` continues
+ * it — so a line that was already there and a line that just arrived are
+ * indistinguishable, which is what makes the feed worth watching rather than
+ * worth timing.
+ *
+ * The "Live" dot follows the transport rather than a timer. A disconnected
+ * socket shows a still dot beside a log that has stopped moving, which is the
+ * truth; the previous version pulsed regardless, because there was nothing
+ * underneath it that could be disconnected.
  */
-export function ActivityLog({
-  seed,
-  script,
-}: {
-  seed: ActivityEntry[];
-  script: Omit<ActivityEntry, "time">[];
-}) {
-  const [entries, setEntries] = useState<ActivityEntry[]>(seed);
-  const cursor = useRef(0);
-  const [live, setLive] = useState(false);
-
-  useEffect(() => {
-    if (script.length === 0) return;
-    setLive(true);
-
-    const id = setInterval(() => {
-      const next = script[cursor.current % script.length];
-      cursor.current += 1;
-
-      const time = new Intl.DateTimeFormat("en-IN", {
-        timeZone: "Asia/Kolkata",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      }).format(new Date());
-
-      setEntries((current) =>
-        [
-          // Ids must stay unique across laps of the script, or React reuses rows.
-          { ...next, id: `${next.id}-${cursor.current}`, time },
-          ...current,
-        ].slice(0, MAX_ENTRIES),
-      );
-    }, STEP_MS);
-
-    return () => clearInterval(id);
-  }, [script]);
+export function ActivityLog({ seed }: { seed: ActivityEntry[] }) {
+  const { entries, live } = useActivityFeed(seed);
 
   return (
     <Section

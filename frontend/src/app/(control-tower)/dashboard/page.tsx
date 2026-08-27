@@ -4,20 +4,20 @@ import Link from "next/link";
 import { ActivityLog } from "@/components/dashboard/activity-log";
 import { CasesTable } from "@/components/dashboard/cases-table";
 import { PlayIcon } from "@/components/dashboard/icons";
+import { LiveRefresh } from "@/components/dashboard/live-refresh";
 import { MetricsStrip } from "@/components/dashboard/metrics-strip";
 import { PaymentPerformance } from "@/components/dashboard/payment-performance";
 import { RecoveryPipeline } from "@/components/dashboard/recovery-pipeline";
 import { RootCauseTable } from "@/components/dashboard/root-cause-table";
 import {
   getActiveCases,
-  getActivityScript,
   getFunnel,
   getKpis,
   getRecoveryByRootCause,
   getSeedActivity,
   getShellStatus,
   getSuccessRateSeries,
-} from "@/lib/dashboard-data";
+} from "@/lib/queries";
 
 export const metadata: Metadata = {
   title: "Control Tower — Tugboat",
@@ -29,35 +29,52 @@ export const metadata: Metadata = {
  *
  * Read top to bottom it answers four questions in order: what are the numbers,
  * where is the money stuck and what is Boa doing about it right now, why is it
- * stuck and is the gateway healthy, and finally - which specific cases would I
+ * stuck and is the gateway healthy, and finally — which specific cases would I
  * touch. Metrics, then movement, then diagnosis, then the working list.
  *
- * Data comes from `lib/dashboard-data`, shaped exactly like the `/dashboard/*`
- * endpoints, so this page does not change when the API arrives.
+ * Seven reads, issued together. They are independent queries against one
+ * database and awaiting them in sequence would make the slowest page in the
+ * product the sum of its parts rather than the worst of them.
+ *
+ * Nothing on this page holds its own copy of anything. When a case moves,
+ * `<LiveRefresh>` re-runs *this function* rather than patching six components
+ * from a socket frame — so what is on screen after an event is what a reload
+ * would show (D-111).
  */
-export default function ControlTowerPage() {
-  const status = getShellStatus();
+export default async function ControlTowerPage() {
+  const [status, kpis, funnel, activity, causes, series, cases] = await Promise.all([
+    getShellStatus(),
+    getKpis(),
+    getFunnel(),
+    getSeedActivity(),
+    getRecoveryByRootCause(),
+    getSuccessRateSeries(),
+    getActiveCases(),
+  ]);
 
   return (
     <div className="space-y-3">
+      <LiveRefresh />
+
       {/*
         Run context, then the one action this page offers.
 
-        The banner is not decoration. These figures move while you watch - the
-        activity feed replays, cases change stage, the recovered counter ticks -
-        and the Simulation Lab's do not, because that is a fixed run of a fixed
-        seed. A judge who sees 44.7% here and 44.7% there on Monday and
-        different numbers on Tuesday needs to know which of the two was
-        supposed to move.
+        The banner is not decoration. These figures move while you watch — the
+        activity feed lands new lines, cases change stage, the recovered counter
+        ticks — and the Simulation Lab's do not, because that is a fixed run of
+        a fixed seed. A judge who sees one number here and the same number there
+        on Monday and different ones on Tuesday needs to know which of the two
+        was supposed to move.
       */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="mono flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-txt-faint">
           <span className="inline-flex items-center gap-1.5 rounded-[2px] border border-[rgba(255,232,134,0.32)] px-2 py-[2px] text-waiting">
             <span className="pulse-dot h-[5px] w-[5px] rounded-full bg-waiting" aria-hidden />
-            LIVE DEMO STREAM
+            LIVE
           </span>
           <span>
-            seed {status.seed} · 214 seeded cases · {status.playbooks} playbooks active · policy{" "}
+            {status.seed > 0 ? `seed ${status.seed} · ` : ""}
+            {kpis.revenueAtRiskCases} cases · {status.playbooks} playbooks active · policy{" "}
             {status.policyVersion} · figures move as work lands
           </span>
         </p>
@@ -68,19 +85,19 @@ export default function ControlTowerPage() {
         </Link>
       </div>
 
-      <MetricsStrip kpis={getKpis()} />
+      <MetricsStrip kpis={kpis} />
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_1.05fr]">
-        <RecoveryPipeline stages={getFunnel()} />
-        <ActivityLog seed={getSeedActivity()} script={getActivityScript()} />
+        <RecoveryPipeline stages={funnel} />
+        <ActivityLog seed={activity} />
       </div>
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.1fr_1fr]">
-        <RootCauseTable rows={getRecoveryByRootCause()} />
-        <PaymentPerformance series={getSuccessRateSeries()} />
+        <RootCauseTable rows={causes} />
+        <PaymentPerformance series={series} />
       </div>
 
-      <CasesTable rows={getActiveCases()} />
+      <CasesTable rows={cases} />
     </div>
   );
 }

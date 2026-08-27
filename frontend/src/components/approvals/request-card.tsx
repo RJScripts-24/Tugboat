@@ -69,6 +69,7 @@ export function RequestCard({
   onReject,
   onEditDraft,
   live = false,
+  busy = false,
 }: {
   request: ApprovalRequest;
   decision: SessionDecision | null;
@@ -79,6 +80,8 @@ export function RequestCard({
   onEditDraft: (lines: string[] | null) => void;
   /** This request arrived while the page was open. */
   live?: boolean;
+  /** A decision is in flight — the buttons say so rather than firing twice. */
+  busy?: boolean;
 }) {
   const [rejecting, setRejecting] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -195,20 +198,25 @@ export function RequestCard({
           ) : (
             <>
               <div className="mt-5 flex flex-wrap items-center gap-2.5">
+                {/* "Release", not "execute". Approving is a permission: the
+                    gate runs again when the release job fires, and it can still
+                    defer the message past quiet hours or refuse it outright if
+                    the customer opted out while this was waiting (D-67). */}
                 <button
                   type="button"
                   onClick={() => onApprove(edited)}
                   className="btn-gold gap-2 px-5 py-[9px] text-[13.5px]"
+                  disabled={busy}
                 >
                   <CheckIcon className="h-[13px] w-[13px]" />
-                  Approve &amp; execute
+                  Approve &amp; release
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setEditing(true)}
                   className="btn-op-quiet"
-                  disabled={editing}
+                  disabled={busy || editing}
                 >
                   <PencilIcon className="h-[12px] w-[12px]" />
                   {edited ? "Edit draft again" : "Edit draft first"}
@@ -216,6 +224,7 @@ export function RequestCard({
 
                 <button
                   type="button"
+                  disabled={busy}
                   onClick={() => setRejecting(true)}
                   className="btn-op-quiet btn-op-danger"
                 >

@@ -74,6 +74,45 @@ export class AppConfigService {
     return this.read("GROQ_MODEL");
   }
 
+  /* ---- Stage 10: real providers, each read only when its lane is real ---- */
+
+  get razorpayKeys(): { keyId: string; keySecret: string } | null {
+    const keyId = this.config.get<string>("RAZORPAY_KEY_ID");
+    const keySecret = this.config.get<string>("RAZORPAY_KEY_SECRET");
+    return keyId && keySecret ? { keyId, keySecret } : null;
+  }
+
+  get resendApiKey(): string | undefined {
+    return this.config.get<string>("RESEND_API_KEY");
+  }
+
+  get resendFrom(): string {
+    return this.read("RESEND_FROM");
+  }
+
+  get twilio(): { accountSid: string; authToken: string; whatsappFrom: string } | null {
+    const accountSid = this.config.get<string>("TWILIO_ACCOUNT_SID");
+    const authToken = this.config.get<string>("TWILIO_AUTH_TOKEN");
+    const whatsappFrom = this.read("TWILIO_WHATSAPP_FROM");
+    return accountSid && authToken ? { accountSid, authToken, whatsappFrom } : null;
+  }
+
+  get voiceTts(): Env["VOICE_TTS"] {
+    return this.read("VOICE_TTS");
+  }
+
+  get sarvamApiKey(): string | undefined {
+    return this.config.get<string>("SARVAM_API_KEY");
+  }
+
+  get voiceAudioDir(): string {
+    return this.read("VOICE_AUDIO_DIR");
+  }
+
+  get publicApiUrl(): string {
+    return this.read("PUBLIC_API_URL").replace(/\/+$/, "");
+  }
+
   get channelModes(): Record<"email" | "whatsapp" | "voice" | "razorpay", "simulated" | "real"> {
     return {
       email: this.read("CHANNEL_MODE_EMAIL"),

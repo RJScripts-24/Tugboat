@@ -28,6 +28,16 @@ export class InlineActionQueue implements ActionQueue {
   private sequence = 0;
   private readonly order = new Map<string, number>();
 
+  /**
+   * Whose clock a delay is measured against.
+   *
+   * A due time and the drain that releases it have to be read from one clock or
+   * the other, never one each: the Stage 8 batch schedules a 20-hour cool-down
+   * on the agent's shifted clock and then drains at a shifted instant, and a
+   * queue holding wall-clock due times would never let a single one of them go.
+   */
+  constructor(private readonly nowMs: () => number = () => Date.now()) {}
+
   async enqueue(job: QueuedJob, options: EnqueueOptions = {}): Promise<void> {
     // Same job id means the same wait, already scheduled. Re-enqueueing it
     // would double-fire the step it guards.
@@ -43,7 +53,7 @@ export class InlineActionQueue implements ActionQueue {
     // Undelayed work is due at any drain, not at "the clock when it was
     // queued" — otherwise a handler that schedules immediate follow-up work
     // sees it fall a millisecond outside the drain it was created in.
-    this.jobs.set(job.jobId, { job, dueAt: delayMs > 0 ? Date.now() + delayMs : 0 });
+    this.jobs.set(job.jobId, { job, dueAt: delayMs > 0 ? this.nowMs() + delayMs : 0 });
   }
 
   async cancel(jobId: string): Promise<void> {
@@ -53,6 +63,15 @@ export class InlineActionQueue implements ActionQueue {
 
   process(handler: JobHandler): void {
     this.handler = handler;
+  }
+
+  async has(jobId: string): Promise<boolean> {
+    return this.jobs.has(jobId);
+  }
+
+  /** In memory, so reachable by construction. */
+  async ping(): Promise<boolean> {
+    return true;
   }
 
   async clear(): Promise<void> {
@@ -73,10 +92,19 @@ export class InlineActionQueue implements ActionQueue {
    * would otherwise spin forever, and a batch runner needs the loop to stop
    * loudly rather than hang.
    */
-  async drain(now: number = Date.now(), options: { maxJobs?: number } = {}): Promise<number> {
+  async drain(
+    now: number = this.nowMs(),
+    options: { maxJobs?: number; concurrency?: number } = {},
+  ): Promise<number> {
     if (!this.handler) throw new Error("InlineActionQueue has no handler registered");
 
     const maxJobs = options.maxJobs ?? 1000;
+    // Serial by default, because that is what makes a test's expectations
+    // readable. A batch run raises it: two hundred cases waiting on the same
+    // simulated instant are two hundred independent conversations, each already
+    // safe against the others through the gate and the idempotency key, and
+    // running them one at a time spends the whole run waiting on network.
+    const concurrency = Math.max(1, options.concurrency ?? 1);
     let ran = 0;
 
     for (;;) {
@@ -86,18 +114,31 @@ export class InlineActionQueue implements ActionQueue {
 
       if (due.length === 0) return ran;
 
-      for (const entry of due) {
-        if (ran >= maxJobs) {
-          throw new Error(
-            `InlineActionQueue drained ${ran} jobs without settling — the handler is scheduling work as fast as it is consumed`,
-          );
-        }
+      if (ran + due.length > maxJobs) {
+        throw new Error(
+          `InlineActionQueue drained ${ran} jobs without settling — the handler is scheduling work as fast as it is consumed`,
+        );
+      }
 
-        await this.cancel(entry.job.jobId);
-        await this.handler(entry.job);
-        ran += 1;
+      // Claimed before any handler runs, so a job a handler re-enqueues under
+      // the same id is a new wait rather than one this pass swallows.
+      for (const entry of due) await this.cancel(entry.job.jobId);
+
+      for (let start = 0; start < due.length; start += concurrency) {
+        const slice = due.slice(start, start + concurrency);
+        await Promise.all(slice.map((entry) => this.handler!(entry.job)));
+        ran += slice.length;
       }
     }
+  }
+
+  /** The earliest instant at which anything is due, on this queue's own clock. */
+  nextDueAt(): number | null {
+    let earliest: number | null = null;
+    for (const entry of this.jobs.values()) {
+      if (earliest === null || entry.dueAt < earliest) earliest = entry.dueAt;
+    }
+    return earliest;
   }
 
   /** What is still waiting, for assertions and for the simulator's clock. */

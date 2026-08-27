@@ -1,54 +1,36 @@
 /**
- * Seeded Simulation Lab data (PRD 6.3, page 6 · the harness in PRD 8).
+ * The Simulation Lab (PRD 6.3, page 6) - the evidence page.
  *
- * Shaped like `POST /simulations`, `GET /simulations/:id/report` and
- * `GET /simulations` (PRD 7.5), so wiring the real batch runner in later means
- * replacing the body of one function.
+ * `POST /simulations` starts a batch, `GET /simulations/:id/report` returns the
+ * artifact it left behind, and `GET /simulations` lists the runs before it.
+ * Every figure the page draws comes out of that one report object, which is the
+ * same object `docs/evidence/` ships as a file - so the screen and the download
+ * are one thing rather than two renderings that have to be kept in step.
  *
- * The rule this module lives by: the TUGBOAT arm is not authored. Every figure
- * it reports - rupees recovered, cases, contacts, terminal stopping rules,
- * exceptions, escalations - is read back out of the seeded batch the rest of
- * the product is already showing. A report page carrying its own copy of the
- * numbers would eventually disagree with the pipeline it claims to have
- * produced, and the whole point of this page is that a panelist can check it.
+ * This file used to compute the report. It read the seeded pipeline and derived
+ * the arms, the grading, the firing counts and the exceptions from it, with the
+ * two counterfactual arms authored against stated assumptions. That was honest
+ * about what it was, and it is not what this page claims any more: the report is
+ * a measurement of a batch that really ran, graded against ground truth the
+ * agent could not reach (ADR-10), with the compliance block computed from the
+ * ledger rows the agent wrote while acting rather than from its own account of
+ * itself.
  *
- * What IS authored: the two counterfactual arms (there is no baseline batch to
- * read - that is what a counterfactual is), the grading against ground truth
- * (the simulator holds the truth; the product never sees it), and the
- * non-terminal policy deferrals, which by definition left no trace on a case's
- * final state.
+ * `getRunScript` is gone with it. The runner narrates itself over the
+ * `sim:<runId>` socket room now, and the counters beside the bar are what the
+ * batch has actually done rather than a fraction of a total decided in advance.
  */
 
-import { getApprovalStats } from "./approvals-data";
-import { getLedgerSize } from "./audit-data";
-import { getKpis } from "./dashboard-data";
 import {
   CASE_TYPE_META,
-  CASE_TYPE_ORDER,
   ROOT_CAUSE_META,
-  getPipelineCases,
   type CaseType,
-  type PipelineCase,
   type RootCause,
 } from "./pipeline-data";
 
-const RUPEE = 100;
-
-/* ------------------------------------------------------------------ */
-/* Configuration vocabulary                                            */
-/* ------------------------------------------------------------------ */
-
+/** The three presets the Run panel offers. */
 export type DifficultyKey = "easy" | "realistic" | "hostile";
 
-/**
- * The persona distribution the batch is drawn from.
- *
- * Each preset states its response-rate assumption out loud, because that
- * assumption is the single biggest lever on the headline number and hiding it
- * would make the headline meaningless. `Hostile` exists so the honest question
- * - what happens when your customers do not want to hear from you - has an
- * answer on the page rather than in the Q&A.
- */
 export const DIFFICULTY: Record<
   DifficultyKey,
   { label: string; caption: string; responseRate: number; optOutRate: number; silentTail: number }
@@ -120,70 +102,9 @@ export type SimulationConfig = {
   arms: ArmKey[];
 };
 
-/* ------------------------------------------------------------------ */
-/* The batch, read back out of the pipeline                            */
-/* ------------------------------------------------------------------ */
-
-const ZERO_MIX: Record<CaseType, number> = {
-  PAYMENT_FAILED: 0,
-  CHECKOUT_ABANDONED: 0,
-  MANDATE_FAILED: 0,
-  INVOICE_OVERDUE: 0,
-};
-
-type Batch = {
-  cases: PipelineCase[];
-  atRiskPaise: number;
-  recoveredPaise: number;
-  recoveredCases: number;
-  contacts: number;
-  mix: Record<CaseType, number>;
-};
-
-let batchCache: Batch | null = null;
-
-function batch(): Batch {
-  if (batchCache) return batchCache;
-
-  const cases = getPipelineCases();
-  const mix = { ...ZERO_MIX };
-  for (const record of cases) mix[record.type] += 1;
-
-  batchCache = {
-    cases,
-    atRiskPaise: cases.reduce((sum, row) => sum + row.amountPaise, 0),
-    recoveredPaise: cases.reduce((sum, row) => sum + row.recoveredPaise, 0),
-    recoveredCases: cases.filter((row) => row.stage === "recovered").length,
-    // Contact attempts actually spent, not a figure kept beside them. This is
-    // the number the naive arm is measured against.
-    contacts: cases.reduce((sum, row) => sum + row.attempts, 0),
-    mix,
-  };
-  return batchCache;
-}
-
-/** The seeded run's own configuration - what the shipped report was produced by. */
-export function getDefaultConfig(): SimulationConfig {
-  const { cases, mix } = batch();
-  const total = cases.length;
-  const share = (count: number) => Math.round((count / total) * 1000) / 10;
-
-  return {
-    batchSize: total,
-    mix: {
-      PAYMENT_FAILED: share(mix.PAYMENT_FAILED),
-      CHECKOUT_ABANDONED: share(mix.CHECKOUT_ABANDONED),
-      MANDATE_FAILED: share(mix.MANDATE_FAILED),
-      INVOICE_OVERDUE: share(mix.INVOICE_OVERDUE),
-    },
-    difficulty: "realistic",
-    seed: 42,
-    arms: ["baseline", "naive", "tugboat"],
-  };
-}
 
 /* ------------------------------------------------------------------ */
-/* Policy arms                                                         */
+/* The report                                                          */
 /* ------------------------------------------------------------------ */
 
 export type ArmResult = {
@@ -202,91 +123,6 @@ export type ArmResult = {
   costPer100Paise: number | null;
 };
 
-/** Paise spent for every ₹100 that came back. ₹100 is 10,000 paise. */
-function costPer100(costPaise: number, recoveredPaise: number): number {
-  return (costPaise / recoveredPaise) * 10_000;
-}
-
-/**
- * The TUGBOAT arm's spend.
- *
- * Authored here and nowhere else, and pinned to the Control Tower's own
- * cost-per-₹100 figure: inference is 18% of it, channels the rest, and the two
- * together over what came back is ₹3.10 per ₹100 (`getKpis`). The split is the
- * deterministic-first architecture showing up as money - the rules table
- * diagnoses four causes in five for nothing, so inference is the small column.
- */
-const TUGBOAT_LLM_PAISE = 102_840;
-const TUGBOAT_CHANNEL_PAISE = 468_490;
-
-/**
- * The naive arm, which is the argument for bounds.
- *
- * It does not diagnose - it retries and messages everything - so it spends
- * nothing on inference and everything on channels. Six contacts per case is
- * what "every channel, no cool-down, no cap, until the deadline" comes to over
- * this batch, and each one costs what a TUGBOAT contact costs, because it is
- * the same channel at the same price. That is the point: the arms differ in
- * judgement, not in what they are buying.
- */
-const NAIVE_CONTACTS_PER_CASE = 6;
-
-export function getArmResults(): ArmResult[] {
-  const { cases, atRiskPaise, recoveredPaise, recoveredCases, contacts } = batch();
-
-  const perContactPaise = TUGBOAT_CHANNEL_PAISE / contacts;
-  const naiveContacts = cases.length * NAIVE_CONTACTS_PER_CASE;
-  const naiveCostPaise = Math.round(naiveContacts * perContactPaise);
-
-  // The counterfactuals. Neither exists as a batch to read back, which is the
-  // reason they are stated as constants rather than derived: a baseline is what
-  // did NOT happen, and pretending to measure it would be the exact dishonesty
-  // this page is built to answer.
-  const baselinePaise = Math.round(atRiskPaise * getKpis().baselineRate);
-  const naivePaise = 129_400 * RUPEE;
-  const tugboatCostPaise = TUGBOAT_LLM_PAISE + TUGBOAT_CHANNEL_PAISE;
-
-  return [
-    {
-      key: "baseline",
-      recoveredPaise: baselinePaise,
-      recoveredCases: 27,
-      recoveryRate: baselinePaise / atRiskPaise,
-      contacts: 0,
-      complaints: 0,
-      optOuts: 0,
-      quietHourSends: 0,
-      costPaise: 0,
-      costPer100Paise: null,
-    },
-    {
-      key: "naive",
-      recoveredPaise: naivePaise,
-      recoveredCases: 71,
-      recoveryRate: naivePaise / atRiskPaise,
-      contacts: naiveContacts,
-      complaints: 34,
-      optOuts: 41,
-      // There is no quiet-hours check in this arm, so a seventh of its sends
-      // land in the blocked window. This is the compliance column's whole point.
-      quietHourSends: 213,
-      costPaise: naiveCostPaise,
-      costPer100Paise: costPer100(naiveCostPaise, naivePaise),
-    },
-    {
-      key: "tugboat",
-      recoveredPaise,
-      recoveredCases,
-      recoveryRate: recoveredPaise / atRiskPaise,
-      contacts,
-      complaints: 2,
-      optOuts: countHalted("opt-out"),
-      quietHourSends: 0,
-      costPaise: tugboatCostPaise,
-      costPer100Paise: costPer100(tugboatCostPaise, recoveredPaise),
-    },
-  ];
-}
 
 export type Headline = {
   atRiskPaise: number;
@@ -300,27 +136,6 @@ export type Headline = {
   upliftPaise: number;
 };
 
-export function getHeadline(): Headline {
-  const arms = getArmResults();
-  const tugboat = arms[2];
-  const baseline = arms[0];
-  const { atRiskPaise, cases } = batch();
-
-  return {
-    atRiskPaise,
-    cases: cases.length,
-    recoveredPaise: tugboat.recoveredPaise,
-    recoveredCases: tugboat.recoveredCases,
-    recoveryRate: tugboat.recoveryRate,
-    baselineRate: baseline.recoveryRate,
-    upliftPoints: (tugboat.recoveryRate - baseline.recoveryRate) * 100,
-    upliftPaise: tugboat.recoveredPaise - baseline.recoveredPaise,
-  };
-}
-
-/* ------------------------------------------------------------------ */
-/* Recovery by case type                                               */
-/* ------------------------------------------------------------------ */
 
 export type TypeResult = {
   type: CaseType;
@@ -331,27 +146,6 @@ export type TypeResult = {
   rate: number;
 };
 
-export function getRecoveryByType(): TypeResult[] {
-  const { cases } = batch();
-
-  return CASE_TYPE_ORDER.map((type) => {
-    const rows = cases.filter((row) => row.type === type);
-    const atRisk = rows.reduce((sum, row) => sum + row.amountPaise, 0);
-    const recovered = rows.reduce((sum, row) => sum + row.recoveredPaise, 0);
-    return {
-      type,
-      cases: rows.length,
-      atRiskPaise: atRisk,
-      recoveredPaise: recovered,
-      recoveredCases: rows.filter((row) => row.stage === "recovered").length,
-      rate: atRisk === 0 ? 0 : recovered / atRisk,
-    };
-  });
-}
-
-/* ------------------------------------------------------------------ */
-/* Diagnosis vs ground truth                                           */
-/* ------------------------------------------------------------------ */
 
 export type Grading = {
   total: number;
@@ -367,64 +161,6 @@ export type Grading = {
   confusions: { truth: RootCause; called: RootCause; count: number }[];
 };
 
-/** Of the confident diagnoses, how many the rules table produced. */
-const RULES_GRADED = 142;
-const RULES_CORRECT = 137;
-const TOTAL_CORRECT = 181;
-
-/**
- * The grade.
- *
- * Authored, and it has to be: the ground-truth cause is held by the simulator
- * and deliberately never reaches the agent, so nothing in the product's own
- * state can be read back to produce it. What it IS pinned to is the batch - the
- * abstentions are the ten UNKNOWN cases the pipeline is showing, and the
- * undiagnosed are the six the funnel shows as detected but not yet diagnosed.
- *
- * The per-method split is the row worth reading twice. The rules table is both
- * cheaper and more accurate; the model is only asked the questions the table
- * has no row for, and it is visibly worse at them. That is an argument for the
- * architecture, not against it.
- */
-export function getGrading(): Grading {
-  const { cases } = batch();
-  const undiagnosed = cases.filter((row) => row.method === null).length;
-  const abstained = cases.filter((row) => row.rootCause === "UNKNOWN").length;
-  const graded = cases.length - undiagnosed - abstained;
-
-  const byMethod = [
-    { method: "RULES" as const, graded: RULES_GRADED, correct: RULES_CORRECT },
-    {
-      method: "LLM" as const,
-      graded: graded - RULES_GRADED,
-      correct: TOTAL_CORRECT - RULES_CORRECT,
-    },
-  ].map((row) => ({ ...row, accuracy: row.correct / row.graded }));
-
-  const correct = byMethod.reduce((sum, row) => sum + row.correct, 0);
-
-  return {
-    total: cases.length,
-    undiagnosed,
-    abstained,
-    graded,
-    correct,
-    wrong: graded - correct,
-    accuracy: correct / graded,
-    byMethod,
-    confusions: [
-      { truth: "BANK_GATEWAY_DEGRADED", called: "INSUFFICIENT_FUNDS", count: 5 },
-      { truth: "INSUFFICIENT_FUNDS", called: "CUSTOMER_DISTRACTED", count: 4 },
-      { truth: "MANDATE_REVOKED", called: "CARD_EXPIRED", count: 3 },
-      { truth: "INSUFFICIENT_FUNDS", called: "BANK_GATEWAY_DEGRADED", count: 3 },
-      { truth: "CARD_EXPIRED", called: "MANDATE_REVOKED", count: 2 },
-    ],
-  };
-}
-
-/* ------------------------------------------------------------------ */
-/* Stopping rules                                                      */
-/* ------------------------------------------------------------------ */
 
 export type RuleFiring = {
   key: string;
@@ -440,115 +176,6 @@ export type RuleFiring = {
   derived: boolean;
 };
 
-function countHalted(marker: string): number {
-  return batch().cases.filter(
-    (row) => row.stage === "halted" && row.nextAction.includes(marker),
-  ).length;
-}
-
-/**
- * Every rule in PRD 9, with the number of times it fired over this batch.
- *
- * The terminal rows are counted from the cases they closed, so this table and
- * the pipeline cannot drift apart. The deferrals are authored: a rule that
- * rescheduled an action and then let it through leaves nothing behind on the
- * case to count, which is precisely why the ledger exists and why the
- * compliance assertions below are computed from it rather than from here.
- *
- * Rows that fired zero times stay in the table. A guardrail list showing only
- * the rules that triggered is a guardrail list you cannot audit.
- */
-export function getRuleFirings(): RuleFiring[] {
-  const { cases } = batch();
-
-  return [
-    {
-      key: "quiet_hours",
-      rule: "Quiet hours · 21:00–09:00 IST",
-      effect: "Contact deferred to 09:00 · silent retries exempt",
-      fired: 58,
-      terminal: false,
-      derived: false,
-    },
-    {
-      key: "cool_down",
-      rule: "Cool-down · 20h between contacts",
-      effect: "Contact deferred · never two nudges in one afternoon",
-      fired: 41,
-      terminal: false,
-      derived: false,
-    },
-    {
-      key: "channel_cap",
-      rule: "Per-channel cap · max 1 voice call",
-      effect: "Fell back to the next cheapest channel",
-      fired: 12,
-      terminal: false,
-      derived: false,
-    },
-    {
-      key: "mandate_cap",
-      rule: "Mandate re-presentation · 3 per cycle, spaced",
-      effect: "Held to the next billing cycle · RBI e-mandate discipline",
-      fired: 9,
-      terminal: false,
-      derived: false,
-    },
-    {
-      key: "confidence_floor",
-      rule: "Confidence floor · 0.60",
-      effect: "Escalated to a human instead of guessing a cause",
-      fired: cases.filter((row) => row.rootCause === "UNKNOWN").length,
-      terminal: false,
-      derived: true,
-    },
-    {
-      key: "attempt_cap",
-      rule: "Attempt cap · 4 per case, 3 for mandates",
-      effect: "Closed EXHAUSTED with the reason written to the ledger",
-      fired: cases.filter((row) => row.stage === "exhausted").length,
-      terminal: true,
-      derived: true,
-    },
-    {
-      key: "opt_out",
-      rule: "Opt-out keyword · STOP, UNSUBSCRIBE, Hindi equivalents",
-      effect: "HALTED on every channel, permanently, for that customer",
-      fired: countHalted("opt-out"),
-      terminal: true,
-      locked: true,
-      derived: true,
-    },
-    {
-      key: "sentiment",
-      rule: "Negative-sentiment halt",
-      effect: "HALTED and handed to a human",
-      fired: countHalted("sentiment"),
-      terminal: true,
-      derived: true,
-    },
-    {
-      key: "deadline",
-      rule: "Deadline expiry",
-      effect: "Closed EXHAUSTED · stale debts are never chased",
-      fired: 0,
-      terminal: true,
-      derived: false,
-    },
-    {
-      key: "override",
-      rule: "Human override · pause per case or globally",
-      effect: "Agent stood down · override audited",
-      fired: 0,
-      terminal: true,
-      derived: false,
-    },
-  ];
-}
-
-/* ------------------------------------------------------------------ */
-/* Compliance, computed from the ledger                                */
-/* ------------------------------------------------------------------ */
 
 export type ComplianceAssertion = {
   claim: string;
@@ -557,84 +184,24 @@ export type ComplianceAssertion = {
   held: boolean;
 };
 
-/**
- * The assertions, and the sentence that makes them worth anything: these are
- * computed from the audit ledger, not from what the agent says it did (PRD 8).
- * The agent's own account of its behaviour is exactly the evidence a panelist
- * should not accept.
- */
-export function getCompliance(): {
+
+export type ComplianceBlock = {
   entries: number;
   verified: boolean;
   assertions: ComplianceAssertion[];
-} {
-  const rules = getRuleFirings();
-  const fired = (key: string) => rules.find((rule) => rule.key === key)?.fired ?? 0;
+};
 
-  return {
-    /*
-     * The ledger's actual size, counted from it.
-     *
-     * This was a hardcoded 4,318 while the Audit Explorer - reading the same
-     * 214 cases - reported 1,885. Two numbers for one ledger is exactly the
-     * kind of contradiction that makes a panel stop believing the rest of the
-     * report, and a compliance figure derived from the audit trail has to
-     * actually be derived from the audit trail.
-     */
-    entries: getLedgerSize(),
-    verified: true,
-    assertions: [
-      {
-        claim: "0 messages sent inside quiet hours",
-        detail: `${fired("quiet_hours")} actions deferred to 09:00 instead · silent retries exempt`,
-        held: true,
-      },
-      {
-        claim: "0 contacts after an opt-out",
-        detail: `${fired(
-          "opt_out",
-        )} customers closed at the gate · every later action on them blocked before it was planned`,
-        held: true,
-      },
-      {
-        claim: "0 cases past their attempt cap",
-        detail: `${fired("attempt_cap")} closed cases stopped at 4, or at 3 for a mandate`,
-        held: true,
-      },
-      {
-        claim: "0 unmasked identifiers in any model prompt",
-        detail:
-          "Phone, email and instrument numbers masked before the call · visible in the ledger payloads",
-        held: true,
-      },
-    ],
-  };
-}
-
-/* ------------------------------------------------------------------ */
-/* Escalations                                                         */
-/* ------------------------------------------------------------------ */
-
-/** Read straight off the Approvals Queue - the same requests, counted once. */
-export function getEscalationSummary() {
-  const stats = getApprovalStats();
-
-  return {
-    total: stats.pending + stats.decisions,
-    pending: stats.pending,
-    decided: stats.decisions,
-    approved: stats.approved,
-    rejected: stats.rejected,
-    medianLatencySeconds: stats.medianLatencySeconds,
-    releasedValuePaise: stats.releasedValuePaise,
-    recoveredAfterApprovalPaise: stats.recoveredAfterApprovalPaise,
-    postApprovalRecoveryRate: stats.postApprovalRecoveryRate,
-  };
-}
-
-/* ------------------------------------------------------------------ */
-/* Exceptions — the section that does not get hidden                   */
-/* ------------------------------------------------------------------ */
+export type EscalationSummary = {
+  total: number;
+  pending: number;
+  decided: number;
+  approved: number;
+  rejected: number;
+  medianLatencySeconds: number;
+  releasedValuePaise: number;
+  recoveredAfterApprovalPaise: number;
+  postApprovalRecoveryRate: number;
+};
 
 export type ExceptionGroup = {
   key: string;
@@ -647,91 +214,54 @@ export type ExceptionGroup = {
   sample: { id: string; type: CaseType; amountPaise: number; cause: RootCause }[];
 };
 
-/**
- * What this batch did not get back, grouped by why.
- *
- * Every case here is a real row in the pipeline that a panelist can open, and
- * every case is in exactly one group. That exclusivity is load-bearing: an
- * unrecovered case can satisfy two of these predicates at once - a diagnosis
- * under the confidence floor that later hit a sentiment halt is both - and a
- * list that counted it twice would total more exceptions than the batch has
- * cases, which is the one arithmetic error this page cannot survive.
- *
- * The order below is therefore an assignment order, not a display order. It
- * runs from the most specific reason a case stopped to the least: a case that
- * halted on an opt-out is reported as an opt-out even if it had also been
- * escalated for a weak diagnosis, because the opt-out is what ended it.
- *
- * Display order is by money left on the table rather than by how flattering
- * the group is - the largest in this run is the attempt cap, which is TUGBOAT
- * choosing to stop, and it belongs at the top.
- */
-export function getExceptions(): ExceptionGroup[] {
-  const { cases } = batch();
-  const claimed = new Set<string>();
 
-  const take = (predicate: (row: PipelineCase) => boolean): PipelineCase[] => {
-    const rows = cases.filter((row) => !claimed.has(row.id) && predicate(row));
-    for (const row of rows) claimed.add(row.id);
-    return rows;
+export type RunMeta = {
+  id: string;
+  seed: number;
+  batchSize: number;
+  mix: Record<string, number>;
+  difficulty: DifficultyKey;
+  difficultyAssumptions: (typeof DIFFICULTY)[DifficultyKey];
+  arms: ArmKey[];
+  /**
+   * The one arm that was executed; the others are counterfactuals.
+   *
+   * Stated in the artifact rather than left to be assumed, because a reader
+   * comparing three columns is entitled to know that two of them were computed
+   * rather than run.
+   */
+  armsExecuted: ArmKey[];
+  policyVersion: string;
+  codeVersion: string;
+  horizonDays: number;
+  /** Cases that threw while the batch worked them. Reported, not rounded off. */
+  caseErrors: number;
+};
+
+/** Exactly the JSON `GET /simulations/:id/report` returns, and the file it downloads as. */
+export type EvidenceReport = {
+  schema: "tugboat.simulation.report/1";
+  run: RunMeta;
+  headline: Headline;
+  arms: ArmResult[];
+  byCaseType: TypeResult[];
+  diagnosis: Grading;
+  stoppingRules: RuleFiring[];
+  compliance: ComplianceBlock;
+  escalations: EscalationSummary;
+  exceptions: ExceptionGroup[];
+  cost: {
+    channelPaise: number;
+    llmPaise: number;
+    /** What the same batch would cost at paid provider rates, not free tiers. */
+    projectedPaise: number;
+    llmCalls: number;
+    tokens: number;
   };
-
-  const groups = [
-    {
-      key: "opt_out",
-      reason: "Customer opted out",
-      note: "STOP received. Every channel closed for that customer, permanently — the one rule that cannot be switched off.",
-      rows: take((row) => row.stage === "halted" && row.nextAction.includes("opt-out")),
-    },
-    {
-      key: "sentiment",
-      reason: "Negative sentiment · halted",
-      note: "The reply read as hostile or distressed, so the agent stood down and handed the case to a person.",
-      rows: take((row) => row.stage === "halted" && row.nextAction.includes("sentiment")),
-    },
-    {
-      key: "exhausted",
-      reason: "Attempt cap reached",
-      note: "Four contacts, no payment, no reply worth another. The agent stopped because it was told to, not because it ran out of ideas.",
-      rows: take((row) => row.stage === "exhausted"),
-    },
-    {
-      key: "abstained",
-      reason: "Below the confidence floor",
-      note: "The model's best read was under 0.60, so nothing was planned on it. These are still open with a person — an unrecovered case is cheaper than a wrong intervention.",
-      rows: take((row) => row.rootCause === "UNKNOWN"),
-    },
-    {
-      key: "undiagnosed",
-      reason: "Never diagnosed",
-      note: "Still queued for the diagnoser when the batch closed. Not a failure of the diagnosis — an absence of one.",
-      rows: take((row) => row.method === null),
-    },
-  ];
-
-  return groups
-    .filter((group) => group.rows.length > 0)
-    .map((group) => ({
-      key: group.key,
-      reason: group.reason,
-      note: group.note,
-      cases: group.rows.length,
-      atRiskPaise: group.rows.reduce((sum, row) => sum + row.amountPaise, 0),
-      sample: [...group.rows]
-        .sort((a, b) => b.amountPaise - a.amountPaise)
-        .slice(0, 3)
-        .map((row) => ({
-          id: row.id,
-          type: row.type,
-          amountPaise: row.amountPaise,
-          cause: row.rootCause,
-        })),
-    }))
-    .sort((a, b) => b.atRiskPaise - a.atRiskPaise);
-}
+};
 
 /* ------------------------------------------------------------------ */
-/* The run itself                                                      */
+/* Progress                                                            */
 /* ------------------------------------------------------------------ */
 
 export type RunStep = {
@@ -742,106 +272,25 @@ export type RunStep = {
   meta: string;
 };
 
-/**
- * What the runner says while it works.
- *
- * Stands in for the `simulation.progress` Socket.IO room (PRD 7.3): the real
- * batch runner emits one of these per case transition and the bar advances on a
- * counter. Here each line is pinned to a fraction of the batch so the replay is
- * identical every time - a progress feed that reshuffles itself between runs
- * would undermine the one claim this page is making.
- */
-export function getRunScript(): RunStep[] {
-  return [
-    {
-      at: 0.01,
-      actor: "BOA",
-      line: "Batch seeded",
-      meta: "seed 42 · 214 cases · personas sealed from the agent",
-    },
-    {
-      at: 0.07,
-      actor: "BOA",
-      line: "Baseline arm complete",
-      meta: "no detection, no contact · natural recovery only",
-    },
-    {
-      at: 0.14,
-      actor: "BOA",
-      line: "Detector opened 47 cases",
-      meta: "success rate 61.4% vs 94.5% baseline · degradation window",
-    },
-    {
-      at: 0.22,
-      actor: "BOA",
-      line: "Diagnosis · rules table",
-      meta: "142 causes matched without a model call",
-    },
-    {
-      at: 0.3,
-      actor: "POLICY",
-      line: "Quiet hours deferring",
-      meta: "21:00–09:00 IST · 58 actions rescheduled to 09:00",
-    },
-    {
-      at: 0.38,
-      actor: "BOA",
-      line: "Diagnosis · model",
-      meta: "56 unmapped codes sent to the model · masked prompts",
-    },
-    {
-      at: 0.46,
-      actor: "POLICY",
-      line: "Confidence floor",
-      meta: "10 cases under 0.60 · escalated rather than guessed",
-    },
-    {
-      at: 0.54,
-      actor: "RECOVERY",
-      line: "Silent retries landing",
-      meta: "gateway back · payments captured without a message",
-    },
-    {
-      at: 0.62,
-      actor: "POLICY",
-      line: "Opt-out halts",
-      meta: "STOP received · channels closed for those customers",
-    },
-    {
-      at: 0.7,
-      actor: "BOA",
-      line: "Nudges and payment links out",
-      meta: "WhatsApp and email inside the caps · voice where it pays",
-    },
-    {
-      at: 0.79,
-      actor: "POLICY",
-      line: "Attempt caps closing cases",
-      meta: "EXHAUSTED with the reason written to the ledger",
-    },
-    {
-      at: 0.87,
-      actor: "RECOVERY",
-      line: "Promises settling",
-      meta: "committed dates honoured · follow-ups collected",
-    },
-    {
-      at: 0.93,
-      actor: "BOA",
-      line: "Naive arm complete",
-      meta: "same seed, no bounds · 1,284 contacts sent",
-    },
-    {
-      at: 0.99,
-      actor: "BOA",
-      line: "Grading against ground truth",
-      meta: "198 confident diagnoses compared with the simulator's truth",
-    },
-  ];
-}
+
+export type RunStatus = {
+  id: string;
+  status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
+  progress: number;
+  seed: number;
+  batchSize: number;
+  difficulty: DifficultyKey;
+  arms: ArmKey[];
+  steps: RunStep[];
+  startedAt: string | null;
+  finishedAt: string | null;
+  failureReason: string | null;
+  /** True for the run the Control Tower is currently narrating. */
+  current: boolean;
+};
 
 /* ------------------------------------------------------------------ */
-/* GET /simulations — run history                                      */
+/* Run history                                                         */
 /* ------------------------------------------------------------------ */
 
 export type SavedRun = {
@@ -856,116 +305,31 @@ export type SavedRun = {
   accuracy: number;
   costPer100Paise: number;
   ranMinutesAgo: number;
-  /** The run this page is currently showing. */
+  /** QUEUED, RUNNING, COMPLETED or FAILED — a failed run keeps its row. */
+  status: string;
+  /** The run the Control Tower is currently narrating. */
   current?: boolean;
 };
 
-/**
- * Earlier runs, kept so a claim can be checked against a rerun rather than
- * taken on trust.
- *
- * The two rows under the current one are the same seed under the other two
- * difficulty presets, which is the answer to "does this only work when your
- * customers are nice". It works less well when they are not, and the page says
- * so rather than shipping one flattering preset.
- */
-export function getRunHistory(): SavedRun[] {
-  const headline = getHeadline();
-  const grading = getGrading();
-  const tugboat = getArmResults()[2];
-
-  return [
-    {
-      id: "SIM-0042-C",
-      seed: 42,
-      batchSize: headline.cases,
-      difficulty: "realistic",
-      policyVersion: "v4",
-      recoveredPaise: headline.recoveredPaise,
-      recoveryRate: headline.recoveryRate,
-      baselineRate: headline.baselineRate,
-      accuracy: grading.accuracy,
-      costPer100Paise: tugboat.costPer100Paise ?? 0,
-      ranMinutesAgo: 18,
-      current: true,
-    },
-    {
-      id: "SIM-0042-B",
-      seed: 42,
-      batchSize: headline.cases,
-      difficulty: "hostile",
-      policyVersion: "v4",
-      recoveredPaise: 96_800 * RUPEE,
-      recoveryRate: 0.235,
-      baselineRate: 0.061,
-      accuracy: 0.902,
-      costPer100Paise: 612,
-      ranMinutesAgo: 94,
-    },
-    {
-      id: "SIM-0042-A",
-      seed: 42,
-      batchSize: headline.cases,
-      difficulty: "easy",
-      policyVersion: "v4",
-      recoveredPaise: 262_400 * RUPEE,
-      recoveryRate: 0.637,
-      baselineRate: 0.204,
-      accuracy: 0.919,
-      costPer100Paise: 216,
-      ranMinutesAgo: 156,
-    },
-    {
-      id: "SIM-0017-A",
-      seed: 17,
-      batchSize: headline.cases,
-      difficulty: "realistic",
-      policyVersion: "v3",
-      recoveredPaise: 171_900 * RUPEE,
-      recoveryRate: 0.428,
-      baselineRate: 0.118,
-      accuracy: 0.887,
-      costPer100Paise: 341,
-      ranMinutesAgo: 1_420,
-    },
-  ];
-}
-
 /* ------------------------------------------------------------------ */
-/* The downloadable artifact                                           */
+/* GET /simulations/headline (public)                                  */
 /* ------------------------------------------------------------------ */
 
 /**
- * The report as a file (PRD 12: evidence artifacts committed with the seed, so
- * judges can verify without running anything).
+ * The four figures the landing page prints above the fold.
  *
- * Deliberately the whole report and not a summary of it - including the
- * exceptions and the failed diagnoses. A downloadable artifact that quietly
- * drops the unflattering half is worse than no artifact.
+ * `runId` and `seed` are nullable rather than zeroed, so a page rendered before
+ * any batch has been promoted reads as dashes instead of as a plausible
+ * measurement of nothing.
  */
-export function buildReportJson(config: SimulationConfig) {
-  return {
-    schema: "tugboat.simulation.report/1",
-    run: {
-      id: "SIM-0042-C",
-      seed: config.seed,
-      batchSize: config.batchSize,
-      mix: config.mix,
-      difficulty: config.difficulty,
-      difficultyAssumptions: DIFFICULTY[config.difficulty],
-      arms: config.arms,
-      policyVersion: "v4",
-      codeVersion: "tugboat@0.4.0",
-    },
-    headline: getHeadline(),
-    arms: getArmResults(),
-    byCaseType: getRecoveryByType(),
-    diagnosis: getGrading(),
-    stoppingRules: getRuleFirings(),
-    compliance: getCompliance(),
-    escalations: getEscalationSummary(),
-    exceptions: getExceptions(),
-  };
-}
+export type PublicHeadline = {
+  runId: string | null;
+  seed: number | null;
+  recoveryRate: number;
+  upliftPoints: number;
+  accuracy: number;
+  atRiskPaise: number;
+  cases: number;
+};
 
 export { CASE_TYPE_META, ROOT_CAUSE_META };

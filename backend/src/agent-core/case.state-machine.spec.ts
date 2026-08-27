@@ -56,6 +56,14 @@ describe("CaseStateMachine", () => {
       expect(machine.canTransition("exhausted", "recovered")).toBe(true);
     });
 
+    it("accepts the money arriving from every stage that is not already it", () => {
+      // A payment link can be paid at any moment, including between detection
+      // and diagnosis. Refusing to record that would be refusing revenue.
+      for (const stage of ALL.filter((value) => value !== "recovered")) {
+        expect(machine.canTransition(stage, "recovered")).toBe(true);
+      }
+    });
+
     it("never lets a halted case resume being chased", () => {
       for (const stage of ["intervening", "waiting", "diagnosed", "promised"] as CaseStage[]) {
         expect(machine.canTransition("halted", stage)).toBe(false);
@@ -76,10 +84,6 @@ describe("CaseStateMachine", () => {
       expect(machine.canTransition("detected", "intervening")).toBe(false);
     });
 
-    it("refuses to recover a case that was never worked", () => {
-      expect(machine.canTransition("detected", "recovered")).toBe(false);
-    });
-
     it("refuses to move a case to itself", () => {
       for (const stage of ALL) {
         expect(machine.canTransition(stage, stage)).toBe(false);
@@ -87,20 +91,20 @@ describe("CaseStateMachine", () => {
     });
 
     it("throws with the offending pair and the legal alternatives", () => {
-      expect(() => machine.assertTransition("detected", "recovered")).toThrow(
+      expect(() => machine.assertTransition("detected", "promised")).toThrow(
         IllegalCaseTransitionError,
       );
 
       try {
-        machine.assertTransition("detected", "recovered");
+        machine.assertTransition("detected", "promised");
         fail("expected a throw");
       } catch (error) {
         const response = (error as IllegalCaseTransitionError).getResponse() as {
           error: string;
           allowed: string[];
         };
-        expect(response.error).toContain("detected -> recovered");
-        expect(response.allowed).toEqual(["diagnosed", "escalated", "halted"]);
+        expect(response.error).toContain("detected -> promised");
+        expect(response.allowed).toEqual(["diagnosed", "escalated", "halted", "recovered"]);
       }
     });
   });

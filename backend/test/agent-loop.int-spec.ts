@@ -8,12 +8,14 @@ import type { Prisma } from "@prisma/client";
 import { AgentWorker } from "../src/agent-core/agent-worker";
 import { ExecutorService } from "../src/agent-core/executor.service";
 import { AppModule } from "../src/app.module";
+import { ClockService } from "../src/common/clock.service";
 import { InboundService } from "../src/conversation/inbound.service";
 import { IngestionService } from "../src/ingestion/ingestion.service";
 import type { NormalizedEvent } from "../src/ingestion/normalized-event";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { ACTION_QUEUE } from "../src/queue/action-queue.interface";
 import { InlineActionQueue } from "../src/queue/inline-action-queue";
+import { daylightIt } from "./daytime-clock";
 import { purgeLedgerForCases } from "./ledger-maintenance";
 
 /**
@@ -30,6 +32,8 @@ import { purgeLedgerForCases } from "./ledger-maintenance";
  */
 describe("The agent loop (integration)", () => {
   const RUN = randomUUID().slice(0, 8);
+  // Every test that expects a contact runs in daylight; see ./daytime-clock.
+  const itd = daylightIt(() => clock);
   const HOUR = 60 * 60_000;
   const DAY = 24 * HOUR;
 
@@ -39,6 +43,7 @@ describe("The agent loop (integration)", () => {
   let worker: AgentWorker;
   let inbound: InboundService;
   let queue: InlineActionQueue;
+  let clock: ClockService;
   let merchantId: string;
 
   const eventIds: string[] = [];
@@ -137,6 +142,7 @@ describe("The agent loop (integration)", () => {
     worker = app.get(AgentWorker);
     inbound = app.get(InboundService);
     queue = app.get(ACTION_QUEUE);
+    clock = app.get(ClockService);
 
     const merchant = await prisma.merchant.findFirst({ orderBy: { createdAt: "asc" } });
     if (!merchant) throw new Error("No merchant seeded — run `npm run db:seed` first.");
@@ -165,7 +171,7 @@ describe("The agent loop (integration)", () => {
   });
 
   describe("case in, contact out, entirely on the queue", () => {
-    it("queues the first step rather than sending inside the webhook", async () => {
+    itd("queues the first step rather than sending inside the webhook", async () => {
       const outcome = await ingestion.ingest(event());
       if (outcome.status !== "accepted") throw new Error("expected the case to open");
 
@@ -175,7 +181,7 @@ describe("The agent loop (integration)", () => {
       expect(await timeline(outcome.caseId)).toEqual(["DETECTED", "DIAGNOSED"]);
     });
 
-    it("plans, gates and sends when the job runs", async () => {
+    itd("plans, gates and sends when the job runs", async () => {
       const outcome = await ingestion.ingest(event());
       if (outcome.status !== "accepted") throw new Error("expected the case to open");
 
@@ -201,7 +207,7 @@ describe("The agent loop (integration)", () => {
       expect(record.costPaise).toBe(action.costPaise);
     });
 
-    it("quotes the real message on the timeline, opt-out line included", async () => {
+    itd("quotes the real message on the timeline, opt-out line included", async () => {
       const outcome = await ingestion.ingest(event());
       if (outcome.status !== "accepted") throw new Error("expected the case to open");
 
@@ -218,7 +224,7 @@ describe("The agent loop (integration)", () => {
       expect(body.rows.some((row) => row.value.includes("Simulated"))).toBe(true);
     });
 
-    it("schedules the next rung behind the cool-down instead of sending twice", async () => {
+    itd("schedules the next rung behind the cool-down instead of sending twice", async () => {
       const caseId = await openCase();
       await executor.step(caseId);
 
@@ -229,7 +235,7 @@ describe("The agent loop (integration)", () => {
   });
 
   describe("a killed worker does not double-send", () => {
-    it("skips a redelivered job rather than spending the next attempt", async () => {
+    itd("skips a redelivered job rather than spending the next attempt", async () => {
       const caseId = await openCase();
 
       const first = await executor.step(caseId, { expectAttempt: 0 });
@@ -247,7 +253,7 @@ describe("The agent loop (integration)", () => {
       expect(actions[0].channel).toBe("WHATSAPP");
     });
 
-    it("skips a duplicate even when two workers race on the same rung", async () => {
+    itd("skips a duplicate even when two workers race on the same rung", async () => {
       const caseId = await openCase();
 
       // Both believe the case is at attempt 0. The unique index on the action
@@ -262,7 +268,7 @@ describe("The agent loop (integration)", () => {
       expect(await prisma.action.count({ where: { caseId, status: "EXECUTED" } })).toBe(1);
     });
 
-    it("claims the row before the send, so a crash mid-flight is visible", async () => {
+    itd("claims the row before the send, so a crash mid-flight is visible", async () => {
       const caseId = await openCase();
       await executor.step(caseId);
 
@@ -271,7 +277,7 @@ describe("The agent loop (integration)", () => {
       expect(action.idempotencyKey).toBe(`case:${caseId}:WHATSAPP:1`);
     });
 
-    it("survives the same job being delivered three times", async () => {
+    itd("survives the same job being delivered three times", async () => {
       const caseId = await openCase();
       const job = {
         kind: "case.step" as const,
@@ -291,7 +297,7 @@ describe("The agent loop (integration)", () => {
   });
 
   describe("the customer answers", () => {
-    it("halts every channel on an opt-out and cancels the scheduled work", async () => {
+    itd("halts every channel on an opt-out and cancels the scheduled work", async () => {
       const caseId = await openCase();
       await executor.step(caseId);
       expect(queue.pending().some((job) => job.caseId === caseId)).toBe(true);
@@ -312,7 +318,7 @@ describe("The agent loop (integration)", () => {
       expect(queue.pending().some((job) => job.caseId === caseId)).toBe(false);
     });
 
-    it("refuses to act again even if a step is somehow replayed after an opt-out", async () => {
+    itd("refuses to act again even if a step is somehow replayed after an opt-out", async () => {
       const caseId = await openCase();
       await inbound.handle({ caseId, channel: "WHATSAPP", text: "STOP" });
 
@@ -321,7 +327,7 @@ describe("The agent loop (integration)", () => {
       expect(await prisma.action.count({ where: { caseId, status: "EXECUTED" } })).toBe(0);
     });
 
-    it("escalates hardship rather than halting it — that is a different fact", async () => {
+    itd("escalates hardship rather than halting it — that is a different fact", async () => {
       const caseId = await openCase();
       await executor.step(caseId);
 
@@ -339,7 +345,7 @@ describe("The agent loop (integration)", () => {
       expect(record.hardshipFlaggedAt).not.toBeNull();
     });
 
-    it("lets a neutral reply carry on inside the bounds", async () => {
+    itd("lets a neutral reply carry on inside the bounds", async () => {
       const caseId = await openCase();
       await executor.step(caseId);
 
@@ -349,7 +355,7 @@ describe("The agent loop (integration)", () => {
       expect((await prisma.case.findUniqueOrThrow({ where: { id: caseId } })).stage).toBe("waiting");
     });
 
-    it("records a late reply on a closed case without trying to move it", async () => {
+    itd("records a late reply on a closed case without trying to move it", async () => {
       const caseId = await openCase();
       await inbound.handle({ caseId, channel: "WHATSAPP", text: "STOP" });
       expect((await prisma.case.findUniqueOrThrow({ where: { id: caseId } })).stage).toBe("halted");
@@ -368,7 +374,7 @@ describe("The agent loop (integration)", () => {
       expect((await timeline(caseId)).filter((kind) => kind === "CUSTOMER_REPLY")).toHaveLength(2);
     });
 
-    it("records the reply on the timeline with its consequence", async () => {
+    itd("records the reply on the timeline with its consequence", async () => {
       const caseId = await openCase();
       await executor.step(caseId);
       await inbound.handle({ caseId, channel: "WHATSAPP", text: "STOP" });
@@ -385,7 +391,7 @@ describe("The agent loop (integration)", () => {
   });
 
   describe("the voice call and its promise", () => {
-    it("records a promise, its row, and the follow-up job", async () => {
+    itd("records a promise, its row, and the follow-up job", async () => {
       // Two attempts spent puts the INSUFFICIENT_FUNDS ladder on its voice rung.
       const caseId = await openCase({ attemptsUsed: 2 });
 
@@ -407,7 +413,7 @@ describe("The agent loop (integration)", () => {
       expect(queue.dueAt(scheduled!.jobId)! - Date.now()).toBeGreaterThan(2 * DAY);
     });
 
-    it("escalates a broken promise instead of nudging again", async () => {
+    itd("escalates a broken promise instead of nudging again", async () => {
       const caseId = await openCase({ attemptsUsed: 2 });
       await executor.step(caseId, { counterpart: "promise" });
 
@@ -430,7 +436,7 @@ describe("The agent loop (integration)", () => {
       expect(await timeline(caseId)).toContain("ESCALATED");
     });
 
-    it("stands down when the call surfaces hardship", async () => {
+    itd("stands down when the call surfaces hardship", async () => {
       const caseId = await openCase({ attemptsUsed: 2 });
 
       const outcome = await executor.step(caseId, { counterpart: "decline" });
@@ -448,7 +454,7 @@ describe("The agent loop (integration)", () => {
       expect(body.transcript.length).toBeGreaterThan(2);
     });
 
-    it("carries on down the ladder when nobody picks up", async () => {
+    itd("carries on down the ladder when nobody picks up", async () => {
       const caseId = await openCase({ attemptsUsed: 2 });
 
       const outcome = await executor.step(caseId, { counterpart: "no-answer" });
@@ -480,7 +486,7 @@ describe("The agent loop (integration)", () => {
       expect(await timeline(caseId)).toEqual(["PLANNED", "POLICY_CHECK"]);
     });
 
-    it("closes a case whose attempts are spent, with the reason on the timeline", async () => {
+    itd("closes a case whose attempts are spent, with the reason on the timeline", async () => {
       const caseId = await openCase({ attemptsUsed: 4 });
 
       const outcome = await executor.step(caseId);
@@ -496,7 +502,7 @@ describe("The agent loop (integration)", () => {
       expect(halted.summary).toContain("Attempt cap reached");
     });
 
-    it("writes a policy decision for every step, including the ones it allowed", async () => {
+    itd("writes a policy decision for every step, including the ones it allowed", async () => {
       const caseId = await openCase();
       await executor.step(caseId);
 

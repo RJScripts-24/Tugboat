@@ -62,6 +62,17 @@ export interface ActionQueue {
   clear(): Promise<void>;
   /** Registered once at boot by the module that owns the work. */
   process(handler: JobHandler): void;
+  /**
+   * Whether a job is still ahead of the worker — waiting, delayed or active.
+   *
+   * The queue is a promise the database made to itself: every open case the
+   * agent is working carries exactly one future job. Losing the queue (Redis
+   * gone, a process killed with the job in memory) breaks that promise
+   * silently, and this is how the reconciler notices (D-131).
+   */
+  has(jobId: string): Promise<boolean>;
+  /** Round-trips the broker, so the health endpoint reports a fact rather than a URL. */
+  ping(): Promise<boolean>;
   close(): Promise<void>;
 }
 

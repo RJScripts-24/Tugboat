@@ -43,7 +43,7 @@ describe("Health (e2e)", () => {
     it("reports Redis as unconfigured rather than healthy", async () => {
       const response = await request(app.getHttpServer()).get("/healthz").expect(200);
 
-      expect(["not_configured", "pending"]).toContain(response.body.checks.redis);
+      expect(response.body.checks.redis).toBe("not_configured");
     });
 
     it("GET /unknown returns 404 rather than an unhandled error", async () => {

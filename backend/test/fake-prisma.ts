@@ -279,6 +279,14 @@ export async function createFakePrisma(options: { databaseUp?: boolean } = {}) {
         return [...counts.entries()].map(([actor, count]) => ({ actor, _count: { _all: count } }));
       },
     },
+    // Stage 8's boot hook reaps runs whose process died, so every app that
+    // registers the simulator asks for this table before it serves a request —
+    // including the ones here, which never start a batch. Nothing else in these
+    // suites touches it: a run is fifteen minutes of real work against a real
+    // database and belongs to the integration tier (simulation.int-spec.ts).
+    simRun: {
+      updateMany: async () => ({ count: 0 }),
+    },
     // The gate's own write path is proven against the real database
     // (policy-gate.int-spec.ts); this only has to let the HTTP layer run.
     policyDecision: {
@@ -290,6 +298,11 @@ export async function createFakePrisma(options: { databaseUp?: boolean } = {}) {
     // depends on a transaction actually being atomic is proven against the real
     // database in the integration tier.
     $transaction: async <T>(run: (tx: unknown) => Promise<T>): Promise<T> => run(client),
+    // The real service wraps `$transaction` so domain events flush on commit
+    // (D-100). These suites assert the HTTP contract, so the wrapper here is the
+    // transaction itself — the flush is proven where it matters, against a real
+    // database in the integration tier.
+    transaction: async <T>(run: (tx: unknown) => Promise<T>): Promise<T> => run(client),
     $connect: async () => undefined,
     $disconnect: async () => undefined,
   };

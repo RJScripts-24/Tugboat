@@ -3,10 +3,10 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { ChalkFilters } from "@/components/dashboard/chalk";
-import { getPendingApprovalCount } from "@/lib/approvals-data";
+import { ClockAnchor } from "@/components/shell/clock-anchor";
 import { Sidebar } from "@/components/shell/sidebar";
 import { TopBar } from "@/components/shell/top-bar";
-import { getShellStatus } from "@/lib/dashboard-data";
+import { getPendingApprovalCount, getShellStatus } from "@/lib/queries";
 import { DEMO_MERCHANT } from "@/lib/demo-merchant";
 import { SESSION_COOKIE, signInModeOf } from "@/lib/session";
 
@@ -35,13 +35,24 @@ export default async function ControlTowerLayout({
   const session = (await cookies()).get(SESSION_COOKIE);
   if (!signInModeOf(session?.value)) redirect("/login");
 
-  const status = getShellStatus();
-  // Counted from the queue rather than carried beside it: the badge and the
-  // Approvals page have to be the same number or neither is worth showing.
-  const pendingApprovals = getPendingApprovalCount();
+  // Two independent reads, in parallel: neither figure needs the other, and
+  // the shell is on the critical path of every page in the product.
+  const [status, pendingApprovals] = await Promise.all([
+    getShellStatus(),
+    // Counted from the queue rather than carried beside it: the badge and the
+    // Approvals page have to be the same number or neither is worth showing.
+    getPendingApprovalCount(),
+  ]);
+
+  // The instant every relative stamp on every page is measured back from.
+  const nowMs = Date.now();
 
   return (
     <div className={`slate chalk min-h-svh ${chalkHand.variable}`}>
+      {/* First, and before anything that prints a time: it sets the render
+          clock from the server's instant so the browser measures against the
+          same "now" (D-115). */}
+      <ClockAnchor ms={nowMs} />
       <ChalkFilters />
 
       <Sidebar

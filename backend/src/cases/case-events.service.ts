@@ -4,6 +4,9 @@ import { Prisma, type EventKind } from "@prisma/client";
 import { AuditWriterService } from "../audit/audit-writer.service";
 import { AUDIT_MAP, payloadFor } from "../audit/ledger-payload";
 import { toCaseRef } from "../common/case-ref";
+import { ClockService } from "../common/clock.service";
+import { DomainEventsService } from "../common/domain-events.service";
+import { toActivityEntry } from "./case-activity";
 
 export type AppendEventInput = {
   caseId: number;
@@ -49,7 +52,11 @@ export async function withSeqRetry<T>(
 
 @Injectable()
 export class CaseEventsService {
-  constructor(private readonly audit: AuditWriterService) {}
+  constructor(
+    private readonly audit: AuditWriterService,
+    private readonly clock: ClockService,
+    private readonly domain: DomainEventsService,
+  ) {}
 
   /**
    * Appends the next event in a case's history — and its ledger row.
@@ -71,7 +78,7 @@ export class CaseEventsService {
       _max: { seq: true },
     });
 
-    const occurredAt = input.occurredAt ?? new Date();
+    const occurredAt = input.occurredAt ?? this.clock.now();
 
     const event = await tx.caseEvent.create({
       data: {
@@ -112,6 +119,41 @@ export class CaseEventsService {
       at: occurredAt,
       payload: payloadFor(event, record, record.customer),
     });
+
+    // Announced, not sent: the bus buffers all three of these until the
+    // transaction commits, so a rolled-back append never reaches a browser
+    // (D-100). The same choke point that guarantees every case event has a
+    // ledger row now guarantees it has a feed line, and for the same reason — a
+    // listener that could be forgotten is a feed that silently stops being true.
+    //
+    // Except inside a shifted clock frame, which is a simulation batch and not
+    // this merchant's operations (D-101). A run works two hundred cases in
+    // minutes; streaming them into the Control Tower's live log would put a
+    // counterfactual experiment in the operational feed at three hundred lines
+    // a second. The Lab narrates its own run through `sim.progress`.
+    if (this.clock.shifted) return event;
+
+    this.domain.publish({
+      name: "activity.new",
+      merchantId: record.merchantId,
+      entry: toActivityEntry(event, record.id),
+    });
+
+    this.domain.publish({
+      name: "case.updated",
+      merchantId: record.merchantId,
+      caseId: toCaseRef(record.id),
+      stage: record.stage,
+      kind: event.kind,
+      recoveredPaise: record.recoveredAmountPaise,
+      attempts: record.attemptsUsed,
+    });
+
+    // The KPI strip is derived from many cases at once, so this is a nudge
+    // rather than a figure: the gateway coalesces the nudges and computes the
+    // numbers once (D-102). Publishing a recomputed `Kpis` per event would run
+    // six aggregate queries inside somebody else's transaction.
+    this.domain.publish({ name: "kpi.updated", merchantId: record.merchantId });
 
     return event;
   }

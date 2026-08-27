@@ -45,7 +45,10 @@ describeIfRedis("BullMQ scheduling (integration)", () => {
   const seen: QueuedJob[] = [];
 
   beforeAll(async () => {
-    queue = new BullActionQueue(process.env.REDIS_URL as string);
+    // A queue of its own. The API's worker, when one is running against the
+    // same Redis, consumes anything placed on the production queue name — and
+    // `clear` here would empty that queue under it (B-51).
+    queue = new BullActionQueue(process.env.REDIS_URL as string, `tugboat-actions-int-${RUN}`);
     // Redis outlives the process. Anything a previous run left scheduled would
     // fire into this one and be counted as ours.
     await queue.clear();
@@ -85,6 +88,77 @@ describeIfRedis("BullMQ scheduling (integration)", () => {
     // Neither has run yet, so both are still holding the same id: Redis kept one.
     await queue.cancel(delayed.jobId);
     expect(seen.filter((entry) => entry.jobId === delayed.jobId)).toHaveLength(0);
+  });
+
+  it("answers a ping from the broker it is actually connected to", async () => {
+    expect(await queue.ping()).toBe(true);
+  });
+
+  it("knows which jobs are still ahead of the worker", async () => {
+    const waiting = job("has-delayed");
+    await queue.enqueue(waiting, { delayMs: 60_000 });
+
+    expect(await queue.has(waiting.jobId)).toBe(true);
+    expect(await queue.has(`int:${RUN}:never-scheduled`)).toBe(false);
+
+    await queue.cancel(waiting.jobId);
+    expect(await queue.has(waiting.jobId)).toBe(false);
+  });
+
+  it("lets a job cancel and re-schedule its own id from inside its handler, the way a deferred rung does", async () => {
+    // The executor's defer path: the running job is the guess, the gate names
+    // the real time, and the same id is cancelled and scheduled again from
+    // inside the handler that is processing it (executor.service.ts, defer).
+    const rung = job("defer-self", { caseId: 999_001 });
+    const rescheduler = new BullActionQueue(process.env.REDIS_URL as string, `tugboat-actions-int-${RUN}-defer`);
+    const runs: number[] = [];
+    let handlerError: Error | null = null;
+
+    rescheduler.process(async (entry) => {
+      runs.push(Date.now());
+      if (runs.length > 1) return;
+      try {
+        await rescheduler.cancel(entry.jobId);
+        await rescheduler.enqueue(entry, { delayMs: 300 });
+      } catch (error) {
+        handlerError = error as Error;
+        throw error;
+      }
+    });
+
+    try {
+      await rescheduler.enqueue(rung);
+      await until(() => runs.length === 2, 20_000);
+
+      expect(handlerError).toBeNull();
+      expect(runs[1] - runs[0]).toBeGreaterThanOrEqual(250);
+    } finally {
+      await rescheduler.clear();
+      await rescheduler.close();
+    }
+  });
+
+  it("schedules an id again after the job that held it has completed", async () => {
+    const again = job("after-completion", { caseId: 999_002 });
+    await queue.enqueue(again);
+    await until(() => seen.filter((entry) => entry.jobId === again.jobId).length === 1);
+
+    // The finished job still sits in the completed tail under this id. A
+    // second schedule must run, not vanish into "already exists".
+    await queue.enqueue(again);
+    await until(() => seen.filter((entry) => entry.jobId === again.jobId).length === 2);
+  });
+
+  it("accepts the executor's real id shape, which BullMQ would refuse on the wire (B-55)", async () => {
+    // Four colon-separated parts: exactly what `case:<id>:step:<n>` is, and
+    // exactly what BullMQ rejects as a custom id. The adapter spells it
+    // differently for Redis and answers `has` by the id the executor gave.
+    const rung = job("shape", { jobId: `case:999003:step:${RUN}`, caseId: 999_003 });
+    await queue.enqueue(rung, { delayMs: 60_000 });
+
+    expect(await queue.has(rung.jobId)).toBe(true);
+    await queue.cancel(rung.jobId);
+    expect(await queue.has(rung.jobId)).toBe(false);
   });
 
   it("holds a delayed job and lets it be cancelled before it fires", async () => {
