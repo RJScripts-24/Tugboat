@@ -36,6 +36,20 @@ deterministic offline driver; the whole agent loop, the batch and the report wor
 at zero cost. `backend/.env.example` documents each key and what switching it on
 changes.
 
+One lane never goes real: **voice**. `CHANNEL_MODE_VOICE=real` is refused at boot.
+The Hinglish conversation is conducted by the dialogue engine and the recording is
+rendered server-side (`VOICE_TTS=edge` needs no key; `sarvam` uses Sarvam Bulbul),
+but no phone rings — an automated outbound call is the most intrusive and, in India,
+the most regulated action in the product (TRAI's DND and consent rules), and a demo
+should not pretend to have that consent. Every voice event is labelled "Simulated
+telephony"; the production path (Twilio/Exotel media streams + STT feeding the same
+dialogue engine) is a one-class swap behind the channel seam.
+
+The live LLM runs on Groq. Model ids there are namespaced by their author —
+`openai/gpt-oss-120b` is OpenAI's open-weight model *served by Groq* with your
+Groq key; no OpenAI account is involved. `GROQ_MODEL` picks any model the key can
+see (`GET https://api.groq.com/openai/v1/models`).
+
 ## Verify it
 
 ```bash
