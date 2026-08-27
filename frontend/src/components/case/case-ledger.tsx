@@ -10,6 +10,7 @@ import {
   CopyIcon,
   EscalateIcon,
   PauseIcon,
+  PhoneIcon,
   RecoveredIcon,
 } from "@/components/dashboard/icons";
 import { MoneyValue, Section } from "@/components/dashboard/primitives";
@@ -164,6 +165,7 @@ function OverrideNote({ last, appended }: { last: OverrideKind; appended: number
     resume: "You resumed Boa. The pause is still on the ledger — it was appended over, not undone.",
     escalate: "You took this case. Boa has stood down and the approvals queue holds it.",
     resolve: "Marked resolved outside Tugboat. The case is closed and no action will follow.",
+    call: "You asked Boa to call. The gate answers first — quiet hours, opt-out and the one-call cap — and the call goes out at the next moment it allows.",
   }[last];
 
   return (
@@ -440,6 +442,16 @@ function Overrides({
         >
           <EscalateIcon className="h-[11px] w-[11px]" />
           Escalate to me
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onOverride("call")}
+          className="btn-op-quiet"
+          disabled={busy || closed || done || state.paused}
+        >
+          <PhoneIcon className="h-[11px] w-[11px]" />
+          Ask Boa to call now
         </button>
 
         <button

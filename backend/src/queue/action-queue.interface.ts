@@ -9,6 +9,8 @@
  * where a run cannot spend three real days waiting for a mandate retry.
  */
 
+import type { PolicyChannel } from "../policy/policy-pack";
+
 export type JobKind =
   /** Take the next step on a case: plan, gate, execute. */
   | "case.step"
@@ -30,6 +32,8 @@ export type QueuedJob = {
   reason: string;
   promiseId?: string;
   approvalId?: string;
+  /** The rung a human asked for; the gate still decides (D-145). */
+  channel?: PolicyChannel;
   /**
    * The attempt count this job was scheduled against.
    *

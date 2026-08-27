@@ -36,14 +36,19 @@ deterministic offline driver; the whole agent loop, the batch and the report wor
 at zero cost. `backend/.env.example` documents each key and what switching it on
 changes.
 
-One lane never goes real: **voice**. `CHANNEL_MODE_VOICE=real` is refused at boot.
-The Hinglish conversation is conducted by the dialogue engine and the recording is
-rendered server-side (`VOICE_TTS=edge` needs no key; `sarvam` uses Sarvam Bulbul),
-but no phone rings — an automated outbound call is the most intrusive and, in India,
-the most regulated action in the product (TRAI's DND and consent rules), and a demo
-should not pretend to have that consent. Every voice event is labelled "Simulated
-telephony"; the production path (Twilio/Exotel media streams + STT feeding the same
-dialogue engine) is a one-class swap behind the channel seam.
+Voice is simulated by default and can be real. Simulated, the Hinglish conversation
+is conducted by the dialogue engine against a persona and the recording is rendered
+server-side (`VOICE_TTS=edge` needs no key; `sarvam` uses Sarvam Bulbul) — no phone
+rings, and every such event says "Simulated telephony". With `CHANNEL_MODE_VOICE=real`
+and a voice-capable Twilio number (`TWILIO_VOICE_FROM`), Boa dials the customer: Twilio
+plays her lines, listens in `hi-IN`, and the same dialogue engine answers turn by turn
+until a date is agreed, hardship is declared, or the customer hangs up; the two-way
+recording and the transcript land on the case (D-144). An outbound call is the most
+regulated action in the product (TRAI's DND and consent rules), which is why the lane
+is off until a merchant switches it on. "Ask Boa to call now" on a case queues the
+voice rung immediately — the gate still decides (D-145). Replies from the customer's
+phone reach the case through Twilio's inbound webhook: point the sandbox's "when a
+message comes in" URL at `https://<api>/webhooks/twilio/whatsapp` (D-146).
 
 The live LLM runs on Groq. Model ids there are namespaced by their author —
 `openai/gpt-oss-120b` is OpenAI's open-weight model *served by Groq* with your

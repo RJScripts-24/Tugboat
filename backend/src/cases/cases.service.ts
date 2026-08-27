@@ -327,7 +327,22 @@ export class CasesService {
       },
     });
 
-    if (existing) return existing;
+    // A customer known by one contact who arrives with the other keeps both:
+    // a row matched by phone with no email would skip every email rung for
+    // ever, and narrate it as the customer's choice (B-69). Existing contacts
+    // are never overwritten — the newer webhook is not the truer one.
+    if (existing) {
+      const fill = {
+        ...(!existing.email && customer.email
+          ? { email: customer.email, maskedEmail: maskEmail(customer.email) }
+          : {}),
+        ...(!existing.phone && customer.phone
+          ? { phone: customer.phone, maskedPhone: maskPhone(customer.phone) }
+          : {}),
+      };
+      if (Object.keys(fill).length === 0) return existing;
+      return this.prisma.customer.update({ where: { id: existing.id }, data: fill });
+    }
 
     return this.prisma.customer.create({
       data: {

@@ -90,11 +90,17 @@ export class AppConfigService {
     return this.read("RESEND_FROM");
   }
 
-  get twilio(): { accountSid: string; authToken: string; whatsappFrom: string } | null {
+  get twilio(): {
+    accountSid: string;
+    authToken: string;
+    whatsappFrom: string;
+    voiceFrom: string | null;
+  } | null {
     const accountSid = this.config.get<string>("TWILIO_ACCOUNT_SID");
     const authToken = this.config.get<string>("TWILIO_AUTH_TOKEN");
     const whatsappFrom = this.read("TWILIO_WHATSAPP_FROM");
-    return accountSid && authToken ? { accountSid, authToken, whatsappFrom } : null;
+    const voiceFrom = this.config.get<string>("TWILIO_VOICE_FROM") ?? null;
+    return accountSid && authToken ? { accountSid, authToken, whatsappFrom, voiceFrom } : null;
   }
 
   get voiceTts(): Env["VOICE_TTS"] {

@@ -169,3 +169,39 @@ describe("the planner", () => {
     expect(degraded.because).toContain("nothing to do with the customer");
   });
 });
+
+describe("the voice rung tells the truth about what came before it (B-69) and honours a human's ask (D-145)", () => {
+  const planner = new PlannerService();
+
+  it("narrates a first-contact call as a first contact when no written channel can reach the customer", () => {
+    const plan = planner.propose(
+      caseRecord({ type: "INVOICE_OVERDUE", rootCause: "CUSTOMER_DISTRACTED", attemptsUsed: 0 }),
+      { exclude: ["EMAIL", "WHATSAPP"], unreachable: ["EMAIL", "WHATSAPP"] },
+    );
+
+    expect(plan.channel).toBe("VOICE");
+    expect(plan.because).toMatch(/first contact/i);
+    expect(plan.because).not.toMatch(/two written nudges/i);
+    expect(plan.rejected[0]).toMatchObject({ reason: expect.stringMatching(/no email or phone number on file/i) });
+  });
+
+  it("counts the written nudges that actually preceded the call", () => {
+    const one = planner.propose(
+      caseRecord({ type: "INVOICE_OVERDUE", rootCause: "CUSTOMER_DISTRACTED", attemptsUsed: 1 }),
+      { exclude: ["EMAIL"] },
+    );
+    expect(one.channel).toBe("VOICE");
+    expect(one.because).toMatch(/one written nudge/i);
+
+    const two = planner.propose(
+      caseRecord({ type: "INVOICE_OVERDUE", rootCause: "CUSTOMER_DISTRACTED", attemptsUsed: 2 }),
+    );
+    expect(two.channel).toBe("VOICE");
+    expect(two.because).toMatch(/two written nudges/i);
+  });
+
+  it("plans the rung a human asked for, unless it has been refused this pass", () => {
+    expect(planner.propose(caseRecord({ attemptsUsed: 0 }), { channel: "VOICE" }).channel).toBe("VOICE");
+    expect(planner.propose(caseRecord({ attemptsUsed: 0 }), { channel: "VOICE", exclude: ["VOICE"] }).channel).toBe("WHATSAPP");
+  });
+});

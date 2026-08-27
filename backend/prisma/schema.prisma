@@ -282,6 +282,7 @@ model Case {
   llmCalls        LlmCall[]
   groundTruth     SimGroundTruth?
   paymentLink     PaymentLink?
+  voiceCalls      VoiceCall[]
 
   @@index([merchantId, stage])
   @@index([merchantId, type])
@@ -670,4 +671,28 @@ model PaymentLink {
   case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
   @@map("payment_links")
+}
+
+model VoiceCall {
+  id           String   @id
+  caseId       Int
+  attempt      Int
+  /// dialing → talking → wrapping → completed, or failed at the provider.
+  status       String   @default("dialing")
+  providerSid  String?
+  /// The dialogue context the engine speaks from, frozen when the call was placed.
+  context      Json
+  /// Both sides of the line, in order, as the webhooks delivered them.
+  transcript   Json
+  intent       String?
+  seconds      Int      @default(0)
+  /// Twilio's recording resource; the media route proxies it behind the session (D-144).
+  recordingUrl String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@map("voice_calls")
 }

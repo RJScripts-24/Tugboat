@@ -31,13 +31,14 @@ import { CasesService } from "./cases.service";
  * a customer whose merchant just said stop.
  */
 
-export type OverrideKind = "pause" | "resume" | "escalate" | "resolve-external";
+export type OverrideKind = "pause" | "resume" | "escalate" | "resolve-external" | "call";
 
 /** The ledger action each override writes, copied from the frontend's map. */
 const LEDGER_ACTION: Record<OverrideKind, string> = {
   pause: "AGENT_PAUSED_BY_HUMAN",
   resume: "AGENT_RESUMED_BY_HUMAN",
   escalate: "ESCALATED_BY_HUMAN",
+  call: "CALL_REQUESTED_BY_HUMAN",
   "resolve-external": "RESOLVED_EXTERNALLY",
 };
 
@@ -86,6 +87,15 @@ export class CaseOverridesService {
       throw new BadRequestException({ error: `${toCaseRef(caseId)} is already paused.` });
     }
 
+    // A call is asked for, not made: it goes through the planner and the gate
+    // like any rung, so a paused or closed case has nothing to call about (D-145).
+    if (kind === "call" && record.pausedAt !== null) {
+      throw new BadRequestException({ error: `${toCaseRef(caseId)} is paused — resume it before asking Boa to call.` });
+    }
+    if (kind === "call" && (record.stage === "halted" || record.stage === "exhausted")) {
+      throw new BadRequestException({ error: `${toCaseRef(caseId)} is ${record.stage}; the agent no longer works it.` });
+    }
+
     const at = this.clock.now();
     const detail = this.detailFor(kind, by, note);
 
@@ -94,7 +104,7 @@ export class CaseOverridesService {
     const row = await this.prisma.transaction(async (tx) => {
       await tx.case.update({
         where: { id: caseId },
-        data: { pausedAt: kind === "resume" ? null : at },
+        data: { pausedAt: kind === "resume" ? null : kind === "call" ? record.pausedAt : at },
       });
 
       return this.audit.append(tx, {
@@ -121,6 +131,23 @@ export class CaseOverridesService {
     // the cancellation must follow the commit rather than race it.
     if (kind !== "resume") {
       await cancelCaseWork(this.queue, this.prisma, caseId);
+    }
+
+    // The requested call is the case's next step, now. The executor plans the
+    // voice rung and the gate answers — quiet hours, opt-out and the one-call
+    // cap apply exactly as they would to a rung the ladder chose (D-145).
+    if (kind === "call") {
+      await this.queue.enqueue(
+        {
+          kind: "case.step",
+          caseId,
+          jobId: `case:${caseId}:step:${record.attemptsUsed}`,
+          reason: `Call requested by ${by}`,
+          expectAttempt: record.attemptsUsed,
+          channel: "VOICE",
+        },
+        { delayMs: 0 },
+      );
     }
 
     // The stage moves only where the machine allows it. An exhausted case that
@@ -153,7 +180,7 @@ export class CaseOverridesService {
         id: `ov-${row.id}`,
         // A human taking a case off the agent reads as a stop on the feed,
         // except for a resume, which is the agent being handed it back.
-        kind: kind === "resume" ? "POLICY" : kind === "escalate" ? "ESCALATE" : "HALT",
+        kind: kind === "resume" || kind === "call" ? "POLICY" : kind === "escalate" ? "ESCALATE" : "HALT",
         actor: "POLICY",
         caseId: toCaseRef(caseId),
         title: `${TITLE[kind]} ${toCaseRef(caseId)}`,
@@ -179,6 +206,7 @@ const TITLE: Record<OverrideKind, string> = {
   pause: "Agent paused on",
   resume: "Agent resumed on",
   escalate: "Taken over by a human on",
+  call: "Call requested on",
   "resolve-external": "Closed outside Tugboat:",
 };
 
@@ -186,6 +214,7 @@ const DETAIL: Record<OverrideKind, string> = {
   pause: "Agent paused",
   resume: "Agent resumed",
   escalate: "Taken over",
+  call: "Call requested",
   "resolve-external": "Resolved externally",
 };
 
@@ -193,5 +222,6 @@ const EFFECT: Record<OverrideKind, string> = {
   pause: "Every outbound action is refused at the gate until a human resumes it; queued work cancelled",
   resume: "The agent works the case again from its current stage",
   escalate: "The case is escalated and held by a human; queued work cancelled",
+  call: "Boa calls the customer at the next moment the gate allows — quiet hours, opt-out and the one-call cap still apply",
   "resolve-external": "The case is closed to the agent — settled somewhere other than Tugboat",
 };

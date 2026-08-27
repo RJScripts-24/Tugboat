@@ -53,6 +53,6 @@ export class AgentWorker implements OnApplicationBootstrap {
       return this.executor.releaseApproved(job.approvalId);
     }
 
-    return this.executor.step(job.caseId, { expectAttempt: job.expectAttempt });
+    return this.executor.step(job.caseId, { expectAttempt: job.expectAttempt, channel: job.channel });
   }
 }

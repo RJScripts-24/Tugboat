@@ -80,6 +80,26 @@ export class VoiceAudioService {
       return null;
     }
   }
+
+  /**
+   * One of Boa's lines on a real call, as a clip Twilio can play (D-144).
+   * Null when rendering is off — the call then uses Twilio's own voice.
+   */
+  async renderTurn(callId: string, index: number, text: string, language: string): Promise<string | null> {
+    if (!this.synthesizer || !text.trim()) return null;
+
+    try {
+      const clip = await this.synthesizer.synthesize(text, "BOA", language);
+      const dir = resolve(this.config.voiceAudioDir);
+      await mkdir(dir, { recursive: true });
+      const file = `${safeName(callId)}-${index}.${clip.format}`;
+      await writeFile(resolve(dir, file), clip.audio);
+      return `${this.config.publicApiUrl}/voice/audio/${file}`;
+    } catch (error) {
+      this.logger.warn(`Could not render turn ${index} of ${callId}: ${(error as Error).message}`);
+      return null;
+    }
+  }
 }
 
 export function safeName(callId: string): string {

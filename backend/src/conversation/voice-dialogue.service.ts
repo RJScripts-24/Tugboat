@@ -7,7 +7,7 @@ import type {
   VoiceIntent,
 } from "../channels/channel-adapter.interface";
 import { LlmService } from "./llm.service";
-import { dialogueTurnSchema } from "./schemas";
+import { dialogueTurnSchema, liveTurnSchema } from "./schemas";
 
 /**
  * The Hinglish voice call (PRD 7.8), conducted turn by turn.
@@ -107,6 +107,26 @@ export type DialogueContext = {
   counterpart: VoiceCounterpart;
 };
 
+/** A real call has no scripted counterpart: the customer answers for themselves. */
+export type LiveDialogueContext = Omit<DialogueContext, "counterpart">;
+
+export type LiveTurn = {
+  say: string;
+  endCall: boolean;
+  intent: "PROMISED_TO_PAY" | "HARDSHIP_DECLARED" | "UNDECIDED";
+};
+
+const LIVE_ADDENDUM = [
+  "",
+  "This is a LIVE phone call. The customer's words arrive from speech recognition and may be garbled, partial or empty.",
+  "Reply with ONE short spoken line — at most two sentences. Work through, in order: greet and confirm who you are speaking to;",
+  "state the pending amount plainly; ask whether they can pay and by when; if they name a day, confirm it and say the payment link is on their WhatsApp;",
+  "if they cannot pay or describe hardship, acknowledge it without any pressure and close warmly; if they ask you to stop calling, apologise and close.",
+  "Never threaten, never mention fees, penalties or consequences.",
+  "Set end_call to true once a date has been agreed, or they have declined, or they asked you to stop, or this is your fifth line.",
+  "Set intent to PROMISED_TO_PAY once a date has been agreed, HARDSHIP_DECLARED when they cannot pay or asked you to stop, otherwise UNDECIDED.",
+].join("\n");
+
 @Injectable()
 export class VoiceDialogueService {
   private readonly logger = new Logger(VoiceDialogueService.name);
@@ -143,6 +163,36 @@ export class VoiceDialogueService {
       language: context.hinglish ? "hi-IN" : "en-IN",
       turnsFromModel,
     };
+  }
+
+  /**
+   * The next line on a real call, given everything said so far (D-144).
+   */
+  async liveTurn(context: LiveDialogueContext, transcript: Turn[]): Promise<LiveTurn> {
+    const user = [
+      "Mode: live",
+      `Customer: ${context.customerName.split(/\s+/)[0]}`,
+      `Merchant: ${context.merchantName}`,
+      `Amount: ${context.amountLabel}`,
+      `Language: ${context.hinglish ? "hinglish" : "english"}`,
+      `Promise date: ${context.promiseDateLabel}`,
+      "Conversation so far:",
+      transcript.length === 0
+        ? "(the call has just connected)"
+        : transcript.map((turn) => `${turn.speaker}: ${turn.text}`).join("\n"),
+    ].join("\n");
+
+    try {
+      const result = await this.llm.structured(
+        { purpose: "dialogue", system: SYSTEM_PROMPT + LIVE_ADDENDUM, user, temperature: 0 },
+        liveTurnSchema,
+        { caseId: context.caseId },
+      );
+      return { say: result.value.say, endCall: result.value.end_call, intent: result.value.intent };
+    } catch (error) {
+      this.logger.error(`Live dialogue turn failed for case ${context.caseId}: ${(error as Error).message}`);
+      throw new VoiceDialogueError("The dialogue engine could not produce the next line of the call.");
+    }
   }
 
   private async speak(context: DialogueContext, goal: Goal, transcript: Turn[]): Promise<string> {

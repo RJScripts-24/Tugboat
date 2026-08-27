@@ -12,8 +12,12 @@ import {
   type MessageDetail,
   type RetryDetail,
   type VoiceCounterpart,
+  type Turn,
   type VoiceDetail,
+  type VoiceIntent,
 } from "../channels/channel-adapter.interface";
+import { voiceCostPaise } from "../channels/channel-costs";
+import type { LiveDialogueContext } from "../conversation/voice-dialogue.service";
 import { isUniqueViolation } from "../cases/case-events.service";
 import { CasesService } from "../cases/cases.service";
 import { toCaseRef } from "../common/case-ref";
@@ -87,6 +91,8 @@ export type StepOptions = {
    * queued job, so a redelivery is a no-op rather than an extra contact.
    */
   expectAttempt?: number;
+  /** A rung a human asked for (D-145). */
+  channel?: PolicyChannel;
 };
 
 @Injectable()
@@ -194,7 +200,7 @@ export class ExecutorService {
     for (let attempt = 0; attempt < MAX_ALTERNATIVES; attempt += 1) {
       let plan: PlanProposal;
       try {
-        plan = this.planner.propose(record, { exclude: refused, unreachable });
+        plan = this.planner.propose(record, { exclude: refused, unreachable, channel: options.channel });
       } catch (error) {
         if (!(error instanceof NoPlanAvailableError)) throw error;
         return this.close(record, "exhausted", "Every channel in the playbook was refused");
@@ -235,6 +241,8 @@ export class ExecutorService {
             jobId,
             reason,
             expectAttempt: record.attemptsUsed,
+            // A rung a human asked for survives the deferral (D-145).
+            channel: options.channel,
           },
           { delayMs: Math.max(0, until.getTime() - this.clock.nowMs()) },
         );
@@ -434,6 +442,15 @@ export class ExecutorService {
       };
     }
 
+    // A real call has only been placed. The conversation and its outcome
+    // arrive over the voice webhooks; until then the case waits, with the
+    // ordinary follow-up in the queue in case the line never connects (D-144).
+    if (detail.kind === "voice" && detail.pending) {
+      await this.cases.settle(record.id, "waiting", voiceEvent(customer, result, detail), spend);
+      await this.scheduleFollowUp(record, plan.channel);
+      return { kind: "sent", channel: plan.channel, channelRef: result.channelRef, stage: "waiting" };
+    }
+
     if (detail.kind === "voice" && detail.intent === "PROMISED_TO_PAY") {
       await this.cases.transition(
         record.id,
@@ -478,6 +495,100 @@ export class ExecutorService {
     await this.scheduleFollowUp(record, plan.channel);
 
     return { kind: "sent", channel: plan.channel, channelRef: result.channelRef, stage: "waiting" };
+  }
+
+  /**
+   * A real call has ended (D-144). Twilio reported the line dropping; the
+   * transcript and the engine's reading of it are in `voice_calls`. This is
+   * the bookkeeping `recordSend` does for a simulated call, done a few
+   * minutes later from a webhook: the action row gets the real transcript and
+   * cost, the timeline gets the call, and a promise or a hardship moves the
+   * case exactly as it would have.
+   */
+  async completeVoiceCall(
+    callId: string,
+    outcome: { answered: boolean; seconds: number; audioUrl: string | null; providerStatus: string },
+  ): Promise<void> {
+    const call = await this.prisma.voiceCall.findUnique({ where: { id: callId } });
+    if (!call || call.status === "completed") return;
+
+    const record = await this.prisma.case.findUnique({
+      where: { id: call.caseId },
+      include: { customer: true },
+    });
+    if (!record) return;
+
+    const transcript = Array.isArray(call.transcript) ? (call.transcript as unknown as Turn[]) : [];
+    const context = call.context as unknown as LiveDialogueContext;
+    const heard = transcript.some((turn) => turn.speaker === "CUSTOMER" && !/^\(/.test(turn.text));
+    const intent: VoiceIntent =
+      !outcome.answered || !heard
+        ? "NO_ANSWER"
+        : call.intent === "PROMISED_TO_PAY" || call.intent === "HARDSHIP_DECLARED"
+          ? call.intent
+          : "NO_COMMITMENT";
+    const costPaise = voiceCostPaise(outcome.seconds);
+
+    const detail: VoiceDetail = {
+      kind: "voice",
+      seconds: outcome.seconds,
+      transcript,
+      summary: liveCallSummary(intent, context, outcome.providerStatus),
+      intent,
+      language: context.hinglish ? "hi-IN" : "en-IN",
+      turnsFromModel: transcript.filter((turn) => turn.speaker === "BOA").length,
+      audioUrl: outcome.audioUrl,
+      recording: outcome.audioUrl ? "Twilio call recording · both sides of the line" : null,
+    };
+
+    await this.prisma.action.updateMany({
+      where: { channelRef: callId },
+      data: { payload: detail as unknown as Prisma.InputJsonValue, costPaise },
+    });
+    await this.prisma.voiceCall.update({
+      where: { id: callId },
+      data: { status: "completed", intent, seconds: outcome.seconds },
+    });
+
+    const result: ChannelSendResult = { channelRef: callId, mode: "real", costPaise, detail };
+    const spend = { costPaise: { increment: costPaise } };
+    const event = voiceEvent(record.customer, result, detail);
+    const stepJob = `case:${record.id}:step:${record.attemptsUsed}`;
+
+    try {
+      if (intent === "PROMISED_TO_PAY") {
+        await this.cases.transition(record.id, "promised", event, spend);
+        await this.queue.cancel(stepJob);
+        await this.recordPromise(record, new Date(this.clock.nowMs() + PROMISE_HORIZON_MS));
+        this.logger.log(`${toCaseRef(record.id)} promised on the call ${callId}`);
+        return;
+      }
+
+      if (intent === "HARDSHIP_DECLARED") {
+        await this.cases.transition(record.id, "escalated", event, {
+          ...spend,
+          hardshipFlaggedAt: this.clock.now(),
+        });
+        await this.queue.cancel(stepJob);
+        await this.cases.appendEvent(
+          record.id,
+          escalatedEvent("Hardship language on the call — the agent stood down", "hardship_language"),
+        );
+        await this.approvals.raise({ caseId: record.id, gate: "hardship_language", channel: "VOICE" });
+        this.logger.log(`${toCaseRef(record.id)} escalated from the call ${callId}`);
+        return;
+      }
+    } catch (error) {
+      // The case moved on while the call was in progress (paid, halted, taken
+      // over). The call is still recorded; nothing is rewritten.
+      this.logger.warn(
+        `${toCaseRef(record.id)} could not move on the call's outcome: ${(error as Error).message}`,
+      );
+    }
+
+    await this.cases.appendEvent(record.id, event);
+    await this.prisma.case.update({ where: { id: record.id }, data: spend });
+    this.logger.log(`${toCaseRef(record.id)} call ${callId} ended · ${intent}`);
   }
 
   private async recordPromise(record: Case, promiseDate: Date): Promise<void> {
@@ -1010,11 +1121,18 @@ function messageEvent(
 }
 
 function voiceEvent(customer: Customer, result: ChannelSendResult, detail: VoiceDetail) {
+  const real = result.mode === "real";
+  const language = detail.language === "hi-IN" ? "Hinglish" : "English";
   return {
     kind: EVENT_KIND.VOICE,
-    title: "Voice call placed",
-    summary: `${detail.language === "hi-IN" ? "Hinglish" : "English"} · ${detail.seconds}s · intent ${detail.intent}`,
-    badge: { label: "simulated telephony", tone: "waiting" },
+    title: detail.pending ? "Voice call placed" : real ? "Voice call" : "Voice call placed",
+    summary: detail.pending
+      ? `${language} · ringing · the conversation is arriving over the voice webhooks`
+      : `${language} · ${detail.seconds}s · intent ${detail.intent}`,
+    badge: {
+      label: real ? (detail.pending ? "real call · ringing" : "real call") : "simulated telephony",
+      tone: "waiting",
+    },
     body: {
       type: "voice",
       seconds: detail.seconds,
@@ -1022,6 +1140,7 @@ function voiceEvent(customer: Customer, result: ChannelSendResult, detail: Voice
       summary: detail.summary,
       intent: detail.intent,
       audioUrl: detail.audioUrl ?? null,
+      recording: detail.recording ?? null,
       rows: [
         { label: "To", value: customer.maskedPhone ?? "—", mono: true },
         ...(detail.recording ? [{ label: "Recording", value: detail.recording }] : []),
@@ -1030,12 +1149,27 @@ function voiceEvent(customer: Customer, result: ChannelSendResult, detail: Voice
         { label: "Call id", value: result.channelRef, mono: true },
         {
           label: "Telephony",
-          value: "Simulated — the production path is Twilio/Exotel media streams",
+          value: real
+            ? "Twilio Programmable Voice — a real call to the customer's phone"
+            : "Simulated — the production path is Twilio/Exotel media streams",
         },
         { label: "Detected intent", value: detail.intent, mono: true },
       ],
     } as unknown as Prisma.InputJsonValue,
   };
+}
+
+function liveCallSummary(intent: VoiceIntent, context: LiveDialogueContext, providerStatus: string): string {
+  switch (intent) {
+    case "PROMISED_TO_PAY":
+      return `Customer confirmed intent to pay and agreed a date on the call. Promise recorded for ${context.promiseDateLabel} at the full ${context.amountLabel}; a follow-up is scheduled for that morning.`;
+    case "HARDSHIP_DECLARED":
+      return "Customer said they cannot pay, or asked not to be called. Hardship language on the line, so the case went to a human and the agent stood down.";
+    case "NO_COMMITMENT":
+      return "The customer answered and the conversation ended without a date. The case stays on the ladder; the next rung is the next allowed contact.";
+    default:
+      return `Nobody picked up (${providerStatus}). No voicemail was left, and the per-channel cap of one voice call means there will not be another.`;
+  }
 }
 
 function recoveredEvent(record: Case, channelRef: string) {

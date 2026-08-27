@@ -79,10 +79,12 @@ const envObject = z.object({
   // The Twilio WhatsApp sandbox number. A recipient must have joined the
   // sandbox ("join <word>") before the first message reaches them.
   TWILIO_WHATSAPP_FROM: z.string().min(1).default("whatsapp:+14155238886"),
+  // A voice-capable Twilio number, E.164. With CHANNEL_MODE_VOICE=real, Boa
+  // dials from it (D-144).
+  TWILIO_VOICE_FROM: z.string().min(1).optional(),
 
-  // Telephony stays simulated and labelled in every mode (PRD 7.8); what this
-  // switches on is the recording — per-turn TTS stitched into one file the
-  // Case Detail player streams. `edge` needs no key.
+  // What this switches on is Boa's voice: the stitched recording of a
+  // simulated call, or her lines on a real one (D-144). `edge` needs no key.
   VOICE_TTS: z.enum(["off", "edge", "sarvam"]).default("off"),
   SARVAM_API_KEY: z.string().min(1).optional(),
   VOICE_AUDIO_DIR: z.string().min(1).default("var/voice"),
@@ -118,9 +120,10 @@ export const envSchema = envObject.superRefine((env, ctx) => {
     "is 'real' but TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN are not set (twilio.com console, WhatsApp sandbox)",
   );
   need(
-    env.CHANNEL_MODE_VOICE === "real",
+    env.CHANNEL_MODE_VOICE === "real" &&
+      !(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_VOICE_FROM),
     "CHANNEL_MODE_VOICE",
-    "cannot be 'real': telephony is simulated and labelled by design (PRD 7.8); set VOICE_TTS=edge for a synthesised recording",
+    "is 'real' but TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_VOICE_FROM are not set (twilio.com console, a voice-capable number)",
   );
   need(
     env.VOICE_TTS === "sarvam" && !env.SARVAM_API_KEY,

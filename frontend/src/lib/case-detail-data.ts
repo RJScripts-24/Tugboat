@@ -39,7 +39,7 @@ export const CHANNEL_META: Record<Channel, { label: string; short: string; mode:
   RETRY: { label: "Razorpay retry", short: "Retry", mode: "Razorpay test mode · real endpoint" },
   WHATSAPP: { label: "WhatsApp", short: "WhatsApp", mode: "Twilio sandbox · real message" },
   EMAIL: { label: "Email", short: "Email", mode: "Resend · real message" },
-  VOICE: { label: "Voice call", short: "Voice", mode: "Simulated telephony · labelled" },
+  VOICE: { label: "Voice call", short: "Voice", mode: "Telephony · simulated unless the lane is real, labelled per call" },
 };
 
 export type EventKind =
@@ -90,8 +90,10 @@ export type EventBody =
       transcript: Turn[];
       summary: string;
       intent: string;
-      /** A stitched server-side recording, when the API rendered one (Stage 10). Never a phone call. */
+      /** A stitched server-side recording of a simulated call (Stage 10), or a real call's recording (D-144). */
       audioUrl?: string | null;
+      /** What the recording is, in the API's words — printed under the player. */
+      recording?: string | null;
       rows: FactRow[];
     }
   | { type: "reply"; channel: Channel; text: string; sentiment: Sentiment; rows: FactRow[] }

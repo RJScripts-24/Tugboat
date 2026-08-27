@@ -147,21 +147,43 @@ export function narrate(
         ],
       };
 
-    default:
+    default: {
+      // A call is normally rung three; when the written rungs were unreachable
+      // or refused it can be the first contact, and the story must say which
+      // (B-69) — a narration that assumes two ignored nudges lies on the timeline.
+      const written = context.attempt - 1;
+      const unwritten = noPhone && (context.unreachable?.includes("EMAIL") ?? false);
       return {
         chosen: "Hinglish voice call, seeking a promise to pay",
         because:
-          "Two written nudges went unanswered and the amount justifies a call. A conversation can surface a date, which no message can.",
+          written <= 0
+            ? unwritten
+              ? "No written channel can reach this customer — no email or phone on file for a message — so the call is the first contact, and the amount justifies it. A conversation can surface a date, which no message can."
+              : "The written rungs were refused this pass, so the call is the first contact, and the amount justifies it. A conversation can surface a date, which no message can."
+            : written === 1
+              ? "One written nudge went unanswered and the amount justifies a call. A conversation can surface a date, which no message can."
+              : "Two written nudges went unanswered and the amount justifies a call. A conversation can surface a date, which no message can.",
         rejected: [
-          {
-            option: "Third written nudge",
-            reason: "Two were ignored; a third is noise and burns the last attempt",
-          },
+          written <= 0
+            ? {
+                option: "Written nudge first",
+                reason: unwritten
+                  ? "No email or phone number on file — nothing to send it to"
+                  : "Every written rung was refused this pass",
+              }
+            : {
+                option: written === 1 ? "Second written nudge" : "Third written nudge",
+                reason:
+                  written === 1
+                    ? "One was ignored; a second before a conversation burns an attempt"
+                    : "Two were ignored; a third is noise and burns the last attempt",
+              },
           {
             option: "Escalate to a human now",
             reason: "No dispute or hardship signal — the agent is still inside its bounds",
           },
         ],
       };
+    }
   }
 }

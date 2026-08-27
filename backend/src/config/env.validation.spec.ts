@@ -87,7 +87,16 @@ describe("Stage 10 lanes", () => {
   });
 
   it("never lets telephony claim to be real", () => {
-    expect(() => validateEnv({ ...VALID, CHANNEL_MODE_VOICE: "real" })).toThrow(/simulated and labelled/);
+    expect(() => validateEnv({ ...VALID, CHANNEL_MODE_VOICE: "real" })).toThrow(/TWILIO_VOICE_FROM/);
+    expect(
+      validateEnv({
+        ...VALID,
+        CHANNEL_MODE_VOICE: "real",
+        TWILIO_ACCOUNT_SID: "AC1",
+        TWILIO_AUTH_TOKEN: "tok",
+        TWILIO_VOICE_FROM: "+19348844920",
+      }).CHANNEL_MODE_VOICE,
+    ).toBe("real");
   });
 
   it("wants a key for Sarvam and none for Edge", () => {

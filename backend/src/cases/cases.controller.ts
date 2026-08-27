@@ -176,6 +176,16 @@ export class CasesController {
     );
   }
 
+  @Post(":id/call")
+  @HttpCode(200)
+  call(
+    @CurrentMerchant() merchant: SessionClaims,
+    @Param("id") id: string,
+    @Body() body: OverrideCaseDto,
+  ) {
+    return this.overrides.apply(merchant.sub, this.parse(id), "call", merchant.name, body.note ?? null);
+  }
+
   @Post(":id/resolve-external")
   @HttpCode(200)
   resolveExternal(

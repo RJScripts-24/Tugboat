@@ -37,12 +37,13 @@ export const OVERRIDE_ACTIONS = {
   resume: "AGENT_RESUMED_BY_HUMAN",
   escalate: "ESCALATED_BY_HUMAN",
   resolve: "RESOLVED_EXTERNALLY",
+  call: "CALL_REQUESTED_BY_HUMAN",
 } as const;
 
 export type OverrideKind = keyof typeof OVERRIDE_ACTIONS;
 
 /** The API spells the fourth one out, because "resolve" alone says nothing about where. */
-export type OverrideRoute = "pause" | "resume" | "escalate" | "resolve-external";
+export type OverrideRoute = "pause" | "resume" | "escalate" | "resolve-external" | "call";
 
 /** The route each override posts to. `resolve` is spelled out in the URL. */
 export const OVERRIDE_ROUTES: Record<OverrideKind, OverrideRoute> = {
@@ -50,6 +51,7 @@ export const OVERRIDE_ROUTES: Record<OverrideKind, OverrideRoute> = {
   resume: "resume",
   escalate: "escalate",
   resolve: "resolve-external",
+  call: "call",
 };
 
 /* ------------------------------------------------------------------ */
@@ -114,6 +116,12 @@ export function caseStateOf(rows: readonly AuditEntry[]): CaseState {
         state.resolvedExternally = true;
         state.paused = true;
         state.last = "resolve";
+        state.appended += 1;
+        break;
+      case OVERRIDE_ACTIONS.call:
+        // A request, not a state: the call itself lands on the timeline as a
+        // voice event when the gate lets it run (D-145).
+        state.last = "call";
         state.appended += 1;
         break;
       case "APPROVAL_DECIDED":

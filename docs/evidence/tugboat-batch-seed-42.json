@@ -1,6 +1,6 @@
 {
   "run": {
-    "id": "SIM-0042-T",
+    "id": "SIM-0042-X",
     "mix": {
       "MANDATE_FAILED": 20,
       "PAYMENT_FAILED": 40,
@@ -52,7 +52,7 @@
       "costPaise": 32707,
       "complaints": 121,
       "recoveryRate": 0.4915765977835876,
-      "quietHourSends": 508,
+      "quietHourSends": 501,
       "recoveredCases": 110,
       "recoveredPaise": 117779000,
       "costPer100Paise": 3
@@ -60,40 +60,40 @@
     {
       "key": "tugboat",
       "optOuts": 17,
-      "contacts": 408,
-      "costPaise": 13549,
+      "contacts": 398,
+      "costPaise": 13367,
       "complaints": 38,
-      "recoveryRate": 0.4461681909093034,
+      "recoveryRate": 0.46567198565575824,
       "quietHourSends": 0,
-      "recoveredCases": 104,
-      "recoveredPaise": 106899400,
+      "recoveredCases": 107,
+      "recoveredPaise": 111572400,
       "costPer100Paise": 1
     }
   ],
   "cost": {
-    "tokens": 43935,
-    "llmCalls": 198,
+    "tokens": 42960,
+    "llmCalls": 193,
     "llmPaise": 0,
-    "channelPaise": 13549,
-    "projectedPaise": 13553
+    "channelPaise": 13367,
+    "projectedPaise": 13370
   },
   "schema": "tugboat.simulation.report/1",
   "headline": {
     "cases": 214,
     "atRiskPaise": 239594400,
-    "upliftPaise": 74442200,
+    "upliftPaise": 79115200,
     "baselineRate": 0.13546727302474515,
-    "recoveryRate": 0.4461681909093034,
-    "upliftPoints": 31.070091788455823,
-    "recoveredCases": 104,
-    "recoveredPaise": 106899400
+    "recoveryRate": 0.46567198565575824,
+    "upliftPoints": 33.02047126310131,
+    "recoveredCases": 107,
+    "recoveredPaise": 111572400
   },
   "diagnosis": {
     "total": 214,
-    "wrong": 17,
-    "graded": 195,
-    "correct": 178,
-    "accuracy": 0.9128205128205128,
+    "wrong": 19,
+    "graded": 196,
+    "correct": 177,
+    "accuracy": 0.9030612244897959,
     "byMethod": [
       {
         "graded": 177,
@@ -102,28 +102,28 @@
         "accuracy": 0.9378531073446328
       },
       {
-        "graded": 18,
+        "graded": 19,
         "method": "LLM",
-        "correct": 12,
-        "accuracy": 0.6666666666666666
+        "correct": 11,
+        "accuracy": 0.5789473684210527
       }
     ],
-    "abstained": 19,
+    "abstained": 18,
     "confusions": [
       {
-        "count": 10,
+        "count": 11,
         "truth": "INSUFFICIENT_FUNDS",
         "called": "BANK_GATEWAY_DEGRADED"
       },
       {
-        "count": 4,
+        "count": 3,
         "truth": "INSUFFICIENT_FUNDS",
         "called": "MANDATE_REVOKED"
       },
       {
-        "count": 1,
-        "truth": "BANK_GATEWAY_DEGRADED",
-        "called": "CUSTOMER_DISTRACTED"
+        "count": 2,
+        "truth": "CUSTOMER_DISTRACTED",
+        "called": "BANK_GATEWAY_DEGRADED"
       },
       {
         "count": 1,
@@ -140,20 +140,20 @@
   },
   "byCaseType": [
     {
-      "rate": 0.5573728958724173,
+      "rate": 0.6031505884018221,
       "type": "PAYMENT_FAILED",
       "cases": 86,
       "atRiskPaise": 97492900,
-      "recoveredCases": 49,
-      "recoveredPaise": 54339900
+      "recoveredCases": 51,
+      "recoveredPaise": 58802900
     },
     {
-      "rate": 0.37745851746231485,
+      "rate": 0.38527663091430975,
       "type": "CHECKOUT_ABANDONED",
       "cases": 53,
       "atRiskPaise": 26860700,
-      "recoveredCases": 24,
-      "recoveredPaise": 10138800
+      "recoveredCases": 25,
+      "recoveredPaise": 10348800
     },
     {
       "rate": 0.5950439796786018,
@@ -173,13 +173,13 @@
     }
   ],
   "compliance": {
-    "entries": 3137,
+    "entries": 3088,
     "verified": true,
     "assertions": [
       {
         "held": true,
         "claim": "0 messages sent inside quiet hours",
-        "detail": "281 actions deferred instead · 21:00–09:00 IST · silent retries exempt"
+        "detail": "267 actions deferred instead · 21:00–09:00 IST · silent retries exempt"
       },
       {
         "held": true,
@@ -202,32 +202,32 @@
     {
       "key": "exhausted",
       "note": "Four contacts, no payment, no reply worth another. The agent stopped because it was told to, not because it ran out of ideas.",
-      "cases": 66,
+      "cases": 64,
       "reason": "Attempt cap reached",
       "sample": [
         {
-          "id": "C-4387",
+          "id": "C-5111",
           "type": "INVOICE_OVERDUE",
           "cause": "CUSTOMER_DISTRACTED",
           "simIndex": 5,
           "amountPaise": 8415200
         },
         {
-          "id": "C-4380",
+          "id": "C-5108",
           "type": "INVOICE_OVERDUE",
           "cause": "CUSTOMER_DISTRACTED",
           "simIndex": 89,
           "amountPaise": 8168700
         },
         {
-          "id": "C-4445",
+          "id": "C-5168",
           "type": "INVOICE_OVERDUE",
           "cause": "CUSTOMER_DISTRACTED",
           "simIndex": 202,
           "amountPaise": 4028300
         }
       ],
-      "atRiskPaise": 66625300
+      "atRiskPaise": 64957100
     },
     {
       "key": "escalated",
@@ -236,21 +236,21 @@
       "reason": "Waiting on a human",
       "sample": [
         {
-          "id": "C-4358",
+          "id": "C-5080",
           "type": "INVOICE_OVERDUE",
           "cause": "UNKNOWN",
           "simIndex": 33,
           "amountPaise": 9119200
         },
         {
-          "id": "C-4371",
+          "id": "C-5093",
           "type": "PAYMENT_FAILED",
           "cause": "UNKNOWN",
           "simIndex": 108,
           "amountPaise": 8831300
         },
         {
-          "id": "C-4443",
+          "id": "C-5166",
           "type": "INVOICE_OVERDUE",
           "cause": "UNKNOWN",
           "simIndex": 164,
@@ -266,21 +266,21 @@
       "reason": "Customer opted out",
       "sample": [
         {
-          "id": "C-4463",
+          "id": "C-5186",
           "type": "INVOICE_OVERDUE",
           "cause": "CUSTOMER_DISTRACTED",
           "simIndex": 81,
           "amountPaise": 6909700
         },
         {
-          "id": "C-4434",
+          "id": "C-5162",
           "type": "PAYMENT_FAILED",
           "cause": "BANK_GATEWAY_DEGRADED",
           "simIndex": 42,
           "amountPaise": 2595600
         },
         {
-          "id": "C-4364",
+          "id": "C-5086",
           "type": "PAYMENT_FAILED",
           "cause": "CARD_EXPIRED",
           "simIndex": 135,
@@ -292,62 +292,55 @@
     {
       "key": "human_closed",
       "note": "A merchant refused the escalation, or approved a stand-down offer that is sent once and followed by nothing. The agent was told to stop, and it stopped.",
-      "cases": 4,
+      "cases": 2,
       "reason": "A person ended it",
       "sample": [
         {
-          "id": "C-4457",
-          "type": "PAYMENT_FAILED",
-          "cause": "INSUFFICIENT_FUNDS",
-          "simIndex": 92,
-          "amountPaise": 2452000
-        },
-        {
-          "id": "C-4480",
+          "id": "C-5195",
           "type": "CHECKOUT_ABANDONED",
           "cause": "CUSTOMER_DISTRACTED",
           "simIndex": 187,
           "amountPaise": 1801400
         },
         {
-          "id": "C-4404",
+          "id": "C-5280",
           "type": "INVOICE_OVERDUE",
           "cause": "CUSTOMER_DISTRACTED",
-          "simIndex": 62,
-          "amountPaise": 1460600
+          "simIndex": 45,
+          "amountPaise": 1641300
         }
       ],
-      "atRiskPaise": 6718900
+      "atRiskPaise": 3442700
     },
     {
       "key": "in_flight",
       "note": "Inside its bounds and still being worked when the ten-day window closed. Reported as unfinished rather than counted as a loss.",
-      "cases": 3,
+      "cases": 4,
       "reason": "Still in flight at the horizon",
       "sample": [
         {
-          "id": "C-4551",
+          "id": "C-5281",
           "type": "MANDATE_FAILED",
           "cause": "BANK_GATEWAY_DEGRADED",
           "simIndex": 21,
           "amountPaise": 455900
         },
         {
-          "id": "C-4526",
+          "id": "C-5239",
+          "type": "MANDATE_FAILED",
+          "cause": "BANK_GATEWAY_DEGRADED",
+          "simIndex": 11,
+          "amountPaise": 271400
+        },
+        {
+          "id": "C-5255",
           "type": "MANDATE_FAILED",
           "cause": "INSUFFICIENT_FUNDS",
           "simIndex": 52,
           "amountPaise": 88300
-        },
-        {
-          "id": "C-4521",
-          "type": "MANDATE_FAILED",
-          "cause": "BANK_GATEWAY_DEGRADED",
-          "simIndex": 167,
-          "amountPaise": 32300
         }
       ],
-      "atRiskPaise": 576500
+      "atRiskPaise": 847900
     },
     {
       "key": "sentiment",
@@ -356,14 +349,14 @@
       "reason": "Negative sentiment · halted",
       "sample": [
         {
-          "id": "C-4449",
+          "id": "C-5173",
           "type": "PAYMENT_FAILED",
           "cause": "BANK_GATEWAY_DEGRADED",
           "simIndex": 93,
           "amountPaise": 390200
         },
         {
-          "id": "C-4391",
+          "id": "C-5112",
           "type": "CHECKOUT_ABANDONED",
           "cause": "INSUFFICIENT_FUNDS",
           "simIndex": 168,
@@ -374,22 +367,22 @@
     }
   ],
   "escalations": {
-    "total": 54,
-    "decided": 54,
+    "total": 53,
+    "decided": 53,
     "pending": 0,
-    "approved": 45,
-    "rejected": 9,
-    "concessionPaise": 177708,
-    "releasedValuePaise": 117479600,
-    "medianLatencySeconds": 7200,
-    "postApprovalRecoveryRate": 0.5603994225380406,
-    "recoveredAfterApprovalPaise": 65835500
+    "approved": 47,
+    "rejected": 6,
+    "concessionPaise": 124128,
+    "releasedValuePaise": 113280200,
+    "medianLatencySeconds": 10800,
+    "postApprovalRecoveryRate": 0.536827265488585,
+    "recoveredAfterApprovalPaise": 60811900
   },
   "stoppingRules": [
     {
       "key": "quiet_hours",
       "rule": "Quiet hours · 21:00–09:00 IST",
-      "fired": 370,
+      "fired": 355,
       "effect": "Contact deferred to 09:00 · silent retries exempt",
       "derived": true,
       "terminal": false
@@ -397,7 +390,7 @@
     {
       "key": "cool_down",
       "rule": "Cool-down · 20h between contacts",
-      "fired": 2,
+      "fired": 1,
       "effect": "Contact deferred · never two nudges in one afternoon",
       "derived": true,
       "terminal": false
@@ -405,7 +398,7 @@
     {
       "key": "channel_cap",
       "rule": "Per-channel cap · max 1 voice call",
-      "fired": 39,
+      "fired": 38,
       "effect": "Fell back to the next cheapest channel",
       "derived": true,
       "terminal": false
@@ -421,7 +414,7 @@
     {
       "key": "confidence_floor",
       "rule": "Confidence floor · 0.60",
-      "fired": 19,
+      "fired": 18,
       "effect": "Escalated to a human instead of guessing a cause",
       "derived": true,
       "terminal": false
@@ -429,7 +422,7 @@
     {
       "key": "attempt_cap",
       "rule": "Attempt cap · 4 per case, 3 for mandates",
-      "fired": 65,
+      "fired": 64,
       "effect": "Closed EXHAUSTED with the reason written to the ledger",
       "derived": true,
       "terminal": true
@@ -454,7 +447,7 @@
     {
       "key": "deadline",
       "rule": "Deadline expiry",
-      "fired": 1,
+      "fired": 0,
       "effect": "Closed EXHAUSTED · stale debts are never chased",
       "derived": true,
       "terminal": true
@@ -462,7 +455,7 @@
     {
       "key": "override",
       "rule": "Human override · refused escalation or approved stand-down",
-      "fired": 4,
+      "fired": 2,
       "effect": "Agent stood down · the decision and its reason are in the ledger",
       "derived": true,
       "terminal": true

@@ -48,7 +48,7 @@ function stripStatus(message: string): string {
 /* Case overrides                                                      */
 /* ------------------------------------------------------------------ */
 
-export type OverrideKind = "pause" | "resume" | "escalate" | "resolve-external";
+export type OverrideKind = "pause" | "resume" | "escalate" | "resolve-external" | "call";
 
 export type OverrideResult = {
   ok: true;

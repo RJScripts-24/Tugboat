@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 
 import { AgentCoreModule } from "./agent-core/agent-core.module";
+import { VoiceModule } from "./voice/voice.module";
 import { ApprovalsModule } from "./approvals/approvals.module";
 import { AuditModule } from "./audit/audit.module";
 import { AuthModule } from "./auth/auth.module";
@@ -39,6 +40,7 @@ import { SimulatorModule } from "./simulator/simulator.module";
     ApprovalsModule,
     AuditModule,
     AgentCoreModule,
+    VoiceModule,
     IngestionModule,
     MetricsModule,
     SimulatorModule,

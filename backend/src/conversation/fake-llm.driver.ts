@@ -190,6 +190,8 @@ export class FakeLlmDriver implements LlmDriver {
             "That's completely fine — I won't push. The link stays live on your WhatsApp for whenever it suits. Thank you for your time.",
         };
 
+    if ((field(prompt, "Mode") ?? "") === "live") return liveTurn(prompt, lines);
+
     return { say: lines[goal] ?? lines.identify, goal_complete: goal !== "identify" };
   }
 }
@@ -244,4 +246,36 @@ function round(value: number): number {
 /** Rough but stable: about four characters per token, which is the usual English ratio. */
 export function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
+}
+
+/**
+ * A real call, offline: Boa's next line is chosen from what the customer last
+ * said, the way the live prompt asks the model to (D-144).
+ */
+function liveTurn(prompt: string, lines: Record<string, string>) {
+  const conversation = prompt.split("Conversation so far:")[1] ?? "";
+  const boaTurns = (conversation.match(/^BOA:/gm) ?? []).length;
+  const said = [...conversation.matchAll(/^CUSTOMER: (.*)$/gm)].map((m) => m[1].toLowerCase());
+  const last = said[said.length - 1] ?? "";
+
+  const hardship = /(nahi|cannot|can't|cant|no money|paise nahi|stop|band karo|don't call|dont call)/.test(last);
+  const promise = /(kal|tomorrow|friday|monday|tuesday|wednesday|thursday|saturday|sunday|salary|pay kar|karunga|karungi|will pay|haan|yes|\bok\b)/.test(last);
+  const intent = hardship ? "HARDSHIP_DECLARED" : promise ? "PROMISED_TO_PAY" : "UNDECIDED";
+
+  const goal =
+    boaTurns === 0
+      ? "identify"
+      : boaTurns === 1
+        ? "state_amount"
+        : intent === "PROMISED_TO_PAY"
+          ? "confirm"
+          : intent === "HARDSHIP_DECLARED"
+            ? "acknowledge"
+            : "seek_promise";
+
+  return {
+    say: lines[goal] ?? lines.identify,
+    end_call: (boaTurns >= 2 && intent !== "UNDECIDED") || boaTurns >= 5,
+    intent,
+  };
 }

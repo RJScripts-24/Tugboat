@@ -336,6 +336,7 @@ function Body({ body, kind }: { body: EventBody; kind: EventKind }) {
             seconds={body.seconds}
             turns={body.transcript}
             audioUrl={body.audioUrl ?? null}
+            recording={body.recording ?? null}
           />
           <p className="mt-3 text-[12.5px] leading-[1.6] text-txt-faint">{body.summary}</p>
           <Disclosure label="Transcript and call record">
@@ -483,22 +484,34 @@ function VoicePlayer({
   seconds,
   turns,
   audioUrl,
+  recording,
 }: {
   seconds: number;
   turns: Turn[];
-  /** Set when the API stitched a recording server-side; the browser then streams it instead of synthesising. */
+  /** Set when the API holds a recording — stitched for a simulated call, or the real call's (D-144). */
   audioUrl: string | null;
+  /** The API's own description of that recording. */
+  recording: string | null;
 }) {
   // A stored recording, when there is one. Still not a phone call — telephony
   // is simulated and labelled — but it is the same audio for every listener,
   // rendered once by the API from the transcript, which the browser-side
   // synthesis below never was.
-  if (audioUrl) return <RecordingPlayer src={audioUrl} seconds={seconds} />;
+  if (audioUrl) return <RecordingPlayer src={audioUrl} seconds={seconds} recording={recording} />;
 
   return <SynthesisedPlayer seconds={seconds} turns={turns} />;
 }
 
-function RecordingPlayer({ src, seconds }: { src: string; seconds: number }) {
+function RecordingPlayer({
+  src,
+  seconds,
+  recording,
+}: {
+  src: string;
+  seconds: number;
+  recording: string | null;
+}) {
+  const real = /Twilio/.test(recording ?? "");
   return (
     <div className="mt-3">
       <div className="border border-white/[0.14] px-3.5 py-3">
@@ -510,8 +523,9 @@ function RecordingPlayer({ src, seconds }: { src: string; seconds: number }) {
         </audio>
       </div>
       <p className="mt-1.5 text-[11px] leading-[1.5] text-txt-faint">
-        Synthesised recording rendered server-side from the transcript below ({clock(seconds)} of
-        simulated call) — not a phone call. Telephony is simulated and labelled by design.
+        {real
+          ? `${recording} (${clock(seconds)}). A real call to the customer's phone; the transcript below is what speech recognition heard.`
+          : `Synthesised recording rendered server-side from the transcript below (${clock(seconds)} of simulated call) — not a phone call. Telephony on this case was simulated and labelled.`}
       </p>
     </div>
   );

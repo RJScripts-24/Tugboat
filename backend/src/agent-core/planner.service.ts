@@ -63,6 +63,8 @@ export class PlannerService {
       exclude?: readonly PolicyChannel[];
       /** Channels the customer cannot be reached on at all, as opposed to refused this pass. */
       unreachable?: readonly PolicyChannel[];
+      /** A rung a human asked for (D-145). The gate still decides whether it may run. */
+      channel?: PolicyChannel;
     } = {},
   ): PlanProposal {
     const attempt = record.attemptsUsed + 1;
@@ -84,7 +86,8 @@ export class PlannerService {
       ...ladder,
     ].filter((channel) => !exclude.has(channel));
 
-    const channel = candidates[0];
+    const channel =
+      options.channel && !exclude.has(options.channel) ? options.channel : candidates[0];
 
     if (!channel) {
       throw new NoPlanAvailableError(

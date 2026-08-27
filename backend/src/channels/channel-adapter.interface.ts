@@ -19,7 +19,13 @@ export type ChannelMode = "simulated" | "real";
 
 export type Turn = { speaker: "BOA" | "CUSTOMER"; text: string };
 
-export type VoiceIntent = "PROMISED_TO_PAY" | "HARDSHIP_DECLARED" | "NO_ANSWER";
+/** `NO_COMMITMENT` is an answered call that settled nothing; `IN_PROGRESS` is a real call still on the line (D-144). */
+export type VoiceIntent =
+  | "PROMISED_TO_PAY"
+  | "HARDSHIP_DECLARED"
+  | "NO_ANSWER"
+  | "NO_COMMITMENT"
+  | "IN_PROGRESS";
 
 /** How the scripted counterpart behaves. Stage 8's personas replace the default. */
 export type VoiceCounterpart = "promise" | "decline" | "no-answer";
@@ -90,9 +96,11 @@ export type VoiceDetail = {
   intent: VoiceIntent;
   language: string;
   turnsFromModel: number;
-  /** The stitched recording, when `VOICE_TTS` is on (D-126). Telephony stays simulated either way. */
+  /** The stitched recording of a simulated call (D-126), or the real call's recording (D-144). */
   audioUrl?: string | null;
   recording?: string | null;
+  /** A real call has been placed; the conversation and its outcome arrive over the voice webhooks (D-144). */
+  pending?: boolean;
 };
 
 export type ChannelDetail = RetryDetail | MessageDetail | VoiceDetail;
@@ -148,7 +156,7 @@ export const REAL_CHANNEL_MODE_LABEL: Record<PolicyChannel, string> = {
   RETRY: "Razorpay test mode · real endpoint",
   WHATSAPP: "Twilio sandbox · real message",
   EMAIL: "Resend · real message",
-  VOICE: "Simulated telephony · labelled",
+  VOICE: "Twilio Programmable Voice · real call",
 };
 
 /** What the timeline prints beside a send: never inferred from config, always from the result. */

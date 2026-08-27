@@ -74,3 +74,19 @@ export const dialogueTurnSchema = z
   .strict();
 
 export type DialogueTurnOutput = z.infer<typeof dialogueTurnSchema>;
+
+/**
+ * One of Boa's lines on a real call, where the customer's words arrive from
+ * speech recognition. The model may say when the call should end and what it
+ * believes was agreed; the executor still reads the outcome off the transcript
+ * the webhooks recorded (D-144).
+ */
+export const liveTurnSchema = z
+  .object({
+    say: z.string().min(1).max(400),
+    end_call: z.boolean(),
+    intent: z.enum(["PROMISED_TO_PAY", "HARDSHIP_DECLARED", "UNDECIDED"]),
+  })
+  .strict();
+
+export type LiveTurnOutput = z.infer<typeof liveTurnSchema>;

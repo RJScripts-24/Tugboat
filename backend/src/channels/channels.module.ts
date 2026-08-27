@@ -19,7 +19,9 @@ import { SimulatedEmailAdapter } from "./simulated-email.adapter";
 import { SimulatedRetryAdapter } from "./simulated-retry.adapter";
 import { SimulatedVoiceAdapter } from "./simulated-voice.adapter";
 import { SimulatedWhatsappAdapter } from "./simulated-whatsapp.adapter";
+import { TwilioVoiceAdapter } from "./twilio-voice.adapter";
 import { TwilioWhatsappAdapter } from "./twilio-whatsapp.adapter";
+import { VoiceCallsService } from "./voice-calls.service";
 
 /**
  * Every adapter behind one token, keyed by channel — and, since Stage 10,
@@ -31,8 +33,9 @@ import { TwilioWhatsappAdapter } from "./twilio-whatsapp.adapter";
  * A lane that says `real` without its key never gets this far: the env
  * schema refuses to boot (D-122).
  *
- * Voice is the exception by design (PRD 7.8): telephony stays simulated and
- * labelled, and what `VOICE_TTS` switches on is the recording.
+ * Voice follows the same rule since D-144: `CHANNEL_MODE_VOICE=real` with a
+ * Twilio voice number places a real call; what `VOICE_TTS` switches on is Boa's
+ * voice, on the line or in the stitched recording.
  *
  * A second token always holds the four simulated adapters: a case that belongs
  * to a batch is worked from it whatever the lanes say (D-140).
@@ -90,6 +93,8 @@ function buildSynthesizer(config: AppConfigService): TtsSynthesizer | null {
     RazorpayRetryAdapter,
     ResendEmailAdapter,
     TwilioWhatsappAdapter,
+    VoiceCallsService,
+    TwilioVoiceAdapter,
     {
       provide: SIMULATED_CHANNEL_ADAPTERS,
       inject: [SimulatedRetryAdapter, SimulatedWhatsappAdapter, SimulatedEmailAdapter, SimulatedVoiceAdapter],
@@ -107,6 +112,7 @@ function buildSynthesizer(config: AppConfigService): TtsSynthesizer | null {
         RazorpayRetryAdapter,
         ResendEmailAdapter,
         TwilioWhatsappAdapter,
+        TwilioVoiceAdapter,
       ],
       useFactory: (
         config: AppConfigService,
@@ -117,18 +123,26 @@ function buildSynthesizer(config: AppConfigService): TtsSynthesizer | null {
         razorpay: RazorpayRetryAdapter,
         resend: ResendEmailAdapter,
         twilio: TwilioWhatsappAdapter,
+        twilioVoice: TwilioVoiceAdapter,
       ) => {
         const modes = config.channelModes;
         const adapters: ChannelAdapter[] = [
           pick(modes.razorpay, retry, razorpay),
           pick(modes.whatsapp, whatsapp, twilio),
           pick(modes.email, email, resend),
-          voice,
+          pick(modes.voice, voice, twilioVoice),
         ];
         return new Map<string, ChannelAdapter>(adapters.map((adapter) => [adapter.channel, adapter]));
       },
     },
   ],
-  exports: [CHANNEL_ADAPTERS, SIMULATED_CHANNEL_ADAPTERS, VoiceDialogueService, PaymentLinkService],
+  exports: [
+    CHANNEL_ADAPTERS,
+    SIMULATED_CHANNEL_ADAPTERS,
+    VoiceDialogueService,
+    VoiceAudioService,
+    VoiceCallsService,
+    PaymentLinkService,
+  ],
 })
 export class ChannelsModule {}
