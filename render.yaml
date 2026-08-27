@@ -1,0 +1,70 @@
+# Render Blueprint for the Tugboat API (D-138).
+#
+# One web service: the API, the BullMQ worker and the Socket.IO gateway are one
+# process by design (D-2). Postgres is Neon and Redis is Upstash, both already
+# reachable from anywhere, so nothing else is provisioned here.
+#
+# Dashboard → Blueprints → New Blueprint Instance → this repo. Every value
+# marked `sync: false` is asked for once at creation and stored as a secret.
+# The frontend is deployed separately on Vercel (see README → Deploy).
+services:
+  - type: web
+    name: tugboat-api
+    runtime: node
+    region: singapore
+    plan: free
+    rootDir: backend
+    # NODE_ENV=production makes npm skip devDependencies, and the Nest CLI,
+    # TypeScript and Prisma's generator are devDependencies; build with them.
+    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+    startCommand: npx prisma migrate deploy && node dist/src/main
+    # A degraded API (database or broker down) answers 503 here on purpose.
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      # Render assigns the port; the API reads it.
+      - key: PORT
+        value: "10000"
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      # The Vercel origin, exactly — CORS and the socket handshake are pinned to it.
+      - key: FRONTEND_ORIGIN
+        sync: false
+      # This service's own public URL, for recording links and the Razorpay webhook.
+      - key: PUBLIC_API_URL
+        sync: false
+      - key: LLM_MODE
+        value: fake
+      - key: CHANNEL_MODE_EMAIL
+        value: simulated
+      - key: CHANNEL_MODE_WHATSAPP
+        value: simulated
+      - key: CHANNEL_MODE_VOICE
+        value: simulated
+      - key: CHANNEL_MODE_RAZORPAY
+        value: simulated
+      - key: VOICE_TTS
+        value: "off"
+      # Optional provider keys — add in the dashboard when a lane goes real.
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
