@@ -80,8 +80,8 @@ export class SarvamTtsSynthesizer implements TtsSynthesizer {
       body: JSON.stringify({
         inputs: [text],
         target_language_code: language === "hi-IN" ? "hi-IN" : "en-IN",
-        speaker: speaker === "BOA" ? "meera" : "arvind",
-        model: "bulbul:v1",
+        speaker: speaker === "BOA" ? "anushka" : "abhilash",
+        model: "bulbul:v2",
         speech_sample_rate: 22050,
       }),
     });

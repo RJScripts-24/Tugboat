@@ -55,7 +55,7 @@ const envObject = z.object({
   // Model ids move faster than code does; keeping them in config means a
   // deprecation is an env edit rather than a patch.
   GEMINI_MODEL: z.string().min(1).default("gemini-2.0-flash"),
-  GROQ_MODEL: z.string().min(1).default("llama-3.3-70b-versatile"),
+  GROQ_MODEL: z.string().min(1).default("openai/gpt-oss-120b"),
   CHANNEL_MODE_EMAIL: z.enum(["simulated", "real"]).default("simulated"),
   CHANNEL_MODE_WHATSAPP: z.enum(["simulated", "real"]).default("simulated"),
   CHANNEL_MODE_VOICE: z.enum(["simulated", "real"]).default("simulated"),
