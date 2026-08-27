@@ -23,6 +23,7 @@ import { PolicyService } from "../policy/policy.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ACTION_QUEUE, type ActionQueue } from "../queue/action-queue.interface";
 import { NoPlanAvailableError, PlannerService, type PlanProposal } from "./planner.service";
+import { unreachableChannels } from "./reachability";
 
 /**
  * Plan, gate, send, record — the loop that actually moves money.
@@ -171,12 +172,16 @@ export class ExecutorService {
       where: { id: record.merchantId },
     });
 
-    const refused: PolicyChannel[] = [];
+    // A channel the customer has no contact for is refused before the ladder
+    // is read, so a missing phone walks the case to email instead of to a
+    // failed send and an escalation (B-61).
+    const unreachable = unreachableChannels(record.customer);
+    const refused: PolicyChannel[] = [...unreachable];
 
     for (let attempt = 0; attempt < MAX_ALTERNATIVES; attempt += 1) {
       let plan: PlanProposal;
       try {
-        plan = this.planner.propose(record, { exclude: refused });
+        plan = this.planner.propose(record, { exclude: refused, unreachable });
       } catch (error) {
         if (!(error instanceof NoPlanAvailableError)) throw error;
         return this.close(record, "exhausted", "Every channel in the playbook was refused");

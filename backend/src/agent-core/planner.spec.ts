@@ -128,6 +128,18 @@ describe("the planner", () => {
     expect(planner.propose(caseRecord({ attemptsUsed: 3 })).channel).toBe("EMAIL");
   });
 
+  it("tells the truth about a customer with no phone: email is the first open channel", () => {
+    const plan = planner.propose(caseRecord({ type: "PAYMENT_FAILED", rootCause: "CARD_EXPIRED" }), {
+      exclude: ["WHATSAPP", "VOICE"],
+      unreachable: ["WHATSAPP", "VOICE"],
+    });
+
+    expect(plan.channel).toBe("EMAIL");
+    expect(plan.because).toMatch(/no phone number on file/i);
+    expect(plan.because).not.toMatch(/last contact was on WhatsApp/);
+    expect(plan.rejected[0]).toMatchObject({ option: "WhatsApp", reason: expect.stringMatching(/no phone/i) });
+  });
+
   it("steps past a channel the gate has already refused", () => {
     const plan = planner.propose(caseRecord(), { exclude: ["WHATSAPP"] });
     expect(plan.channel).toBe("RETRY");

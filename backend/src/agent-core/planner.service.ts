@@ -58,7 +58,12 @@ export class PlannerService {
    */
   propose(
     record: Case,
-    options: { degraded?: boolean; exclude?: readonly PolicyChannel[] } = {},
+    options: {
+      degraded?: boolean;
+      exclude?: readonly PolicyChannel[];
+      /** Channels the customer cannot be reached on at all, as opposed to refused this pass. */
+      unreachable?: readonly PolicyChannel[];
+    } = {},
   ): PlanProposal {
     const attempt = record.attemptsUsed + 1;
     const exclude = new Set(options.exclude ?? []);
@@ -94,6 +99,7 @@ export class PlannerService {
       attempt,
       attemptCap: record.attemptCap,
       degraded: options.degraded ?? record.degradationIncidentId !== null,
+      unreachable: options.unreachable,
     });
 
     return planProposalSchema.parse({

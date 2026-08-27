@@ -72,9 +72,18 @@ export type PlanNarration = { chosen: string; because: string; rejected: { optio
  */
 export function narrate(
   channel: PolicyChannel,
-  context: { type: CaseType; rootCause: RootCause | null; attempt: number; attemptCap: number; degraded: boolean },
+  context: {
+    type: CaseType;
+    rootCause: RootCause | null;
+    attempt: number;
+    attemptCap: number;
+    degraded: boolean;
+    /** Channels this customer has no contact for; the story must not invent a send on them (B-61). */
+    unreachable?: readonly PolicyChannel[];
+  },
 ): PlanNarration {
   const position = `attempt ${context.attempt} of ${context.attemptCap}`;
+  const noPhone = context.unreachable?.includes("WHATSAPP") ?? false;
 
   switch (channel) {
     case "RETRY":
@@ -121,11 +130,15 @@ export function narrate(
         because:
           context.type === "INVOICE_OVERDUE"
             ? "Receivables are settled in writing. An email is the record an accounts inbox expects and can forward internally."
-            : "The last contact was on WhatsApp and that channel's cool-down is still running, so email is the next allowed window.",
+            : noPhone
+              ? "There is no phone number on file for this customer, so email is the first channel that can reach them."
+              : "The last contact was on WhatsApp and that channel's cool-down is still running, so email is the next allowed window.",
         rejected: [
           {
-            option: "Second WhatsApp",
-            reason: "Inside the channel cool-down — the gate would block it",
+            option: noPhone ? "WhatsApp" : "Second WhatsApp",
+            reason: noPhone
+              ? "No phone number on file — nothing to send it to"
+              : "Inside the channel cool-down — the gate would block it",
           },
           {
             option: "Voice call",
