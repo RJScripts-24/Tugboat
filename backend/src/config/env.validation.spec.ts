@@ -46,6 +46,20 @@ describe("validateEnv", () => {
     expect(() => validateEnv({ ...VALID, JWT_SECRET: "too-short" })).toThrow(/JWT_SECRET/);
   });
 
+  it("reads a blank KEY= line as not set, so keys can be listed before they are filled in (B-60)", () => {
+    const env = validateEnv({ ...VALID, RESEND_API_KEY: "", RAZORPAY_KEY_ID: "   ", GROQ_API_KEY: "" });
+
+    expect(env.RESEND_API_KEY).toBeUndefined();
+    expect(env.RAZORPAY_KEY_ID).toBeUndefined();
+    expect(env.GROQ_API_KEY).toBeUndefined();
+  });
+
+  it("still refuses a real lane whose key line is blank", () => {
+    expect(() => validateEnv({ ...VALID, CHANNEL_MODE_EMAIL: "real", RESEND_API_KEY: "" })).toThrow(
+      /RESEND_API_KEY/,
+    );
+  });
+
   it("rejects an unknown channel mode rather than silently defaulting", () => {
     expect(() => validateEnv({ ...VALID, CHANNEL_MODE_VOICE: "sort-of-real" })).toThrow(
       /CHANNEL_MODE_VOICE/,

@@ -136,7 +136,13 @@ export type Env = z.infer<typeof envSchema>;
  * reach a request handler holding an environment it has not verified.
  */
 export function validateEnv(raw: Record<string, unknown>): Env {
-  const result = envSchema.safeParse(raw);
+  // `KEY=` with nothing after it is how a .env file says "not set". Reading it
+  // as an empty string made every optional key refuse to boot the moment it
+  // was listed to be filled in later (B-60).
+  const present = Object.fromEntries(
+    Object.entries(raw).filter(([, value]) => !(typeof value === "string" && value.trim() === "")),
+  );
+  const result = envSchema.safeParse(present);
 
   if (!result.success) {
     const issues = result.error.issues
