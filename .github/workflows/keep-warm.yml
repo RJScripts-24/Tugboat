@@ -1,0 +1,24 @@
+# Keeps the Render free instance awake so its scheduler keeps time (B-70).
+# A sleeping instance runs no worker: every deferred step — quiet hours,
+# cool-downs, mandate spacing, promise check-ins — waits in Redis until
+# something wakes the process. This is that something, every five minutes.
+# GitHub may run scheduled jobs a few minutes late; for a judging window an
+# always-on instance or a one-minute external ping is the surer choice.
+name: keep-warm
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: GET /healthz
+        run: |
+          code=$(curl -s -o /tmp/health.json -w "%{http_code}" --max-time 60 https://tugboat-api.onrender.com/healthz || echo 000)
+          echo "healthz → $code"
+          cat /tmp/health.json 2>/dev/null | head -c 400; echo
+          test "$code" = "200" || test "$code" = "503"

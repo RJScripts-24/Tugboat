@@ -88,10 +88,13 @@ A batch started on any deployment is worked by the simulated adapters whatever
 `CHANNEL_MODE_*` says — a simulated customer never reaches Resend, Twilio or
 Razorpay (D-140) — and promoting it clears earlier batches, never a live case.
 
-Render's free plan sleeps after fifteen idle minutes; a webhook that arrives
-while it sleeps is retried by Razorpay, and the reconciler restores any step the
-sleep delayed — but for a judging window an always-on instance is the safer
-choice.
+Render's free plan sleeps after fifteen idle minutes, **and a sleeping instance
+runs no scheduler**: every deferred step — quiet hours, cool-downs, mandate
+spacing, promise check-ins — waits in Redis until something wakes the process
+(B-70). A webhook that arrives while it sleeps is retried by Razorpay and wakes
+it; a timer does not. For any window in which the schedule matters, keep it
+awake with an external ping every five minutes (cron-job.org or UptimeRobot on
+`GET /healthz`) or run an always-on instance.
 
 ## Read it
 
