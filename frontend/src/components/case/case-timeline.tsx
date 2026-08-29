@@ -497,7 +497,9 @@ function VoicePlayer({
   // is simulated and labelled — but it is the same audio for every listener,
   // rendered once by the API from the transcript, which the browser-side
   // synthesis below never was.
-  if (audioUrl) return <RecordingPlayer src={mediaSrc(audioUrl)} seconds={seconds} recording={recording} />;
+  if (audioUrl) {
+    return <RecordingPlayer src={mediaSrc(audioUrl)} seconds={seconds} turns={turns} recording={recording} />;
+  }
 
   return <SynthesisedPlayer seconds={seconds} turns={turns} />;
 }
@@ -517,27 +519,128 @@ function mediaSrc(audioUrl: string): string {
 function RecordingPlayer({
   src,
   seconds,
+  turns,
   recording,
 }: {
   src: string;
   seconds: number;
+  turns: Turn[];
   recording: string | null;
 }) {
+  // The same chrome as the synthesised player — one play button, the call's
+  // bars, one clock — driving a real <audio> element instead of the speech
+  // engine, so a stored recording and a synthesised one read as one control.
+  const audio = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [length, setLength] = useState(seconds);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const el = audio.current;
+    return () => {
+      el?.pause();
+    };
+  }, []);
+
+  const toggle = () => {
+    const el = audio.current;
+    if (!el) return;
+    if (playing) {
+      el.pause();
+      return;
+    }
+    if (el.ended || (length > 0 && el.currentTime >= length)) el.currentTime = 0;
+    void el.play().catch(() => setFailed(true));
+  };
+
+  const seek = (fraction: number) => {
+    const el = audio.current;
+    if (!el || !Number.isFinite(length) || length <= 0) return;
+    el.currentTime = Math.max(0, Math.min(length, fraction * length));
+    setElapsed(el.currentTime);
+  };
+
+  const bars = waveform(turns, 56);
+  const progress = length > 0 ? elapsed / length : 0;
   const real = /Twilio/.test(recording ?? "");
+
   return (
     <div className="mt-3">
-      <div className="border border-white/[0.14] px-3.5 py-3">
-        {/* Native controls: the file is the product here, not the chrome, and
-            a stream that the browser can scrub is worth more than a waveform
-            it cannot. */}
-        <audio controls preload="none" src={src} className="h-[32px] w-full">
-          <track kind="captions" />
-        </audio>
+      <audio
+        ref={audio}
+        src={src}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        onTimeUpdate={(event) => setElapsed(event.currentTarget.currentTime)}
+        onLoadedMetadata={(event) => {
+          const known = event.currentTarget.duration;
+          if (Number.isFinite(known) && known > 0) setLength(known);
+        }}
+        onError={() => setFailed(true)}
+      >
+        <track kind="captions" />
+      </audio>
+
+      <div className="flex items-center gap-3.5 border border-white/[0.14] px-3.5 py-3">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={playing ? "Pause the recording" : "Play the recording"}
+          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-white/25 text-txt transition-colors hover:border-waiting hover:text-waiting"
+        >
+          {playing ? (
+            <PauseIcon className="h-[11px] w-[11px]" />
+          ) : (
+            <PlayIcon className="ml-[2px] h-[11px] w-[11px]" />
+          )}
+        </button>
+
+        {/* Click anywhere on the bars to scrub; a stored recording can. */}
+        <div
+          className="flex h-[26px] min-w-0 flex-1 cursor-pointer items-center gap-[2px]"
+          role="slider"
+          aria-label="Recording position"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(length)}
+          aria-valuenow={Math.round(elapsed)}
+          tabIndex={0}
+          onClick={(event) => {
+            const box = event.currentTarget.getBoundingClientRect();
+            seek((event.clientX - box.left) / Math.max(1, box.width));
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowRight") seek(Math.min(1, progress + 0.05));
+            if (event.key === "ArrowLeft") seek(Math.max(0, progress - 0.05));
+            if (event.key === " " || event.key === "Enter") {
+              event.preventDefault();
+              toggle();
+            }
+          }}
+        >
+          {bars.map((height, i) => (
+            <span
+              key={i}
+              className="wave-bar"
+              data-played={i / bars.length <= progress}
+              style={{ height: `${height}%` }}
+            />
+          ))}
+        </div>
+
+        <span className="mono shrink-0 text-[11.5px] text-txt-faint">
+          {clock(elapsed)} / {clock(length)}
+        </span>
       </div>
+
       <p className="mt-1.5 text-[11px] leading-[1.5] text-txt-faint">
-        {real
-          ? `${recording} (${clock(seconds)}). A real call to the customer's phone; the transcript below is what speech recognition heard.`
-          : `Synthesised recording rendered server-side from the transcript below (${clock(seconds)} of simulated call) — not a phone call. Telephony on this case was simulated and labelled.`}
+        {failed
+          ? "The recording could not be loaded. Sign in again if the session has expired; the transcript below is complete either way."
+          : real
+            ? `${recording} (${clock(length)}). A real call to the customer's phone; the transcript below is what speech recognition heard.`
+            : `Synthesised recording rendered server-side from the transcript below (${clock(length)} of simulated call) — not a phone call. Telephony on this case was simulated and labelled.`}
       </p>
     </div>
   );
