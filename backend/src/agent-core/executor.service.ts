@@ -52,6 +52,10 @@ const RETRY_GAP_MS = 30 * 60_000;
 
 /** How far ahead a voice call may book a promise. */
 const PROMISE_HORIZON_MS = 3 * 24 * 60 * 60_000;
+/** A second call to the same phone waits this long behind one in progress (B-71). */
+const CALL_SPACING_MS = 90_000;
+/** A call older than this with no status callback is not in progress; the line dropped and Twilio never said. */
+const CALL_IN_PROGRESS_MS = 3 * 60_000;
 
 const EVENT_KIND = {
   RETRY: "RETRY_EXECUTED",
@@ -215,6 +219,28 @@ export class ExecutorService {
       });
 
       if (verdict.outcome.kind === "allow") {
+        // One phone, one call at a time. Two rungs released in the same second
+        // — a deferred rung and a human's request, say — dialled one handset
+        // twice at once and both rang out as no-answer (B-71). The second waits
+        // ninety seconds behind the first rather than colliding with it.
+        if (plan.channel === "VOICE" && (await this.callInProgressTo(record.customer))) {
+          const jobId = `case:${caseId}:step:${record.attemptsUsed}`;
+          await this.queue.cancel(jobId);
+          await this.queue.enqueue(
+            {
+              kind: "case.step",
+              caseId,
+              jobId,
+              reason: "Another call to this phone is in progress",
+              expectAttempt: record.attemptsUsed,
+              channel: options.channel,
+            },
+            { delayMs: CALL_SPACING_MS },
+          );
+          const until = new Date(this.clock.nowMs() + CALL_SPACING_MS);
+          return { kind: "deferred", until, reason: "Another call to this phone is in progress" };
+        }
+
         return this.execute(
           record,
           record.customer,
@@ -589,6 +615,19 @@ export class ExecutorService {
     await this.cases.appendEvent(record.id, event);
     await this.prisma.case.update({ where: { id: record.id }, data: spend });
     this.logger.log(`${toCaseRef(record.id)} call ${callId} ended · ${intent}`);
+  }
+
+  private async callInProgressTo(customer: Customer): Promise<boolean> {
+    if (!customer.phone) return false;
+    const open = await this.prisma.voiceCall.findFirst({
+      where: {
+        status: { in: ["dialing", "talking", "wrapping"] },
+        updatedAt: { gte: new Date(this.clock.nowMs() - CALL_IN_PROGRESS_MS) },
+        case: { customer: { phone: customer.phone } },
+      },
+      select: { id: true },
+    });
+    return open !== null;
   }
 
   private async recordPromise(record: Case, promiseDate: Date): Promise<void> {

@@ -497,9 +497,21 @@ function VoicePlayer({
   // is simulated and labelled — but it is the same audio for every listener,
   // rendered once by the API from the transcript, which the browser-side
   // synthesis below never was.
-  if (audioUrl) return <RecordingPlayer src={audioUrl} seconds={seconds} recording={recording} />;
+  if (audioUrl) return <RecordingPlayer src={mediaSrc(audioUrl)} seconds={seconds} recording={recording} />;
 
   return <SynthesisedPlayer seconds={seconds} turns={turns} />;
+}
+
+/**
+ * The recording is fetched through the Control Tower's own origin. The API's
+ * media route is behind the session guard, and a browser will not send one
+ * site's httpOnly cookie to another; the BFF route reads it and streams the
+ * file back same-origin (D-147). A URL that is not a recording of ours is
+ * left alone.
+ */
+function mediaSrc(audioUrl: string): string {
+  const match = /\/media\/voice\/([A-Za-z0-9_-]{1,80}\.(?:mp3|wav))$/.exec(audioUrl);
+  return match ? `/api/media/voice/${match[1]}` : audioUrl;
 }
 
 function RecordingPlayer({

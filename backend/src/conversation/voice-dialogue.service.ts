@@ -116,6 +116,23 @@ export type LiveTurn = {
   intent: "PROMISED_TO_PAY" | "HARDSHIP_DECLARED" | "UNDECIDED";
 };
 
+/**
+ * The live call has its own system prompt rather than the scripted one plus an
+ * addendum: a model shown two JSON shapes answers with whichever it read last,
+ * and a turn that fails its schema mid-call is a hang-up (B-72).
+ */
+const LIVE_SYSTEM_PROMPT = [
+  "You are Boa, an AI assistant on a live phone call for an Indian merchant about an unpaid amount.",
+  "Speak one turn at a time, in at most two sentences.",
+  "Rules you may never break: introduce yourself by name on the merchant's behalf on the first turn;",
+  "state the amount plainly; ask for a date rather than demanding one;",
+  "never threaten, never mention legal action, never imply consequences, never raise your voice.",
+  "If the person says money is tight, accept it immediately and close warmly without pressing.",
+  "Match the language named in the context: Hinglish means conversational Hindi written in Latin script.",
+  "Answer only with JSON of exactly this shape and nothing else:",
+  '{"say": string, "end_call": boolean, "intent": "PROMISED_TO_PAY" | "HARDSHIP_DECLARED" | "UNDECIDED"}',
+].join(" ");
+
 const LIVE_ADDENDUM = [
   "",
   "This is a LIVE phone call. The customer's words arrive from speech recognition and may be garbled, partial or empty.",
@@ -184,7 +201,7 @@ export class VoiceDialogueService {
 
     try {
       const result = await this.llm.structured(
-        { purpose: "dialogue", system: SYSTEM_PROMPT + LIVE_ADDENDUM, user, temperature: 0 },
+        { purpose: "dialogue", system: LIVE_SYSTEM_PROMPT + LIVE_ADDENDUM, user, temperature: 0 },
         liveTurnSchema,
         { caseId: context.caseId },
       );

@@ -26,7 +26,7 @@ import type { Turn } from "../channels/channel-adapter.interface";
 import { contextOf, transcriptOf, VoiceCallsService } from "../channels/voice-calls.service";
 import { AppConfigService } from "../config/app-config.service";
 import { VoiceAudioService } from "../conversation/voice-audio.service";
-import { VoiceDialogueService } from "../conversation/voice-dialogue.service";
+import { VoiceDialogueService, type LiveTurn } from "../conversation/voice-dialogue.service";
 import { twilioSignatureValid } from "./twilio-signature";
 
 /** Boa never keeps a customer on the line past this many of her own turns. */
@@ -103,7 +103,16 @@ export class VoiceController {
     ).length;
     const boaTurnsSoFar = transcript.filter((turn) => turn.speaker === "BOA").length;
 
-    const next = await this.dialogue.liveTurn(context, transcript);
+    // The engine failing mid-call must not become Twilio's "application error"
+    // in the customer's ear: Boa closes politely and the case keeps what was
+    // said (B-72). The failure is on the log, not on the line.
+    let next: LiveTurn;
+    try {
+      next = await this.dialogue.liveTurn(context, transcript);
+    } catch (error) {
+      this.logger.error(`Call ${callId}: the dialogue engine failed mid-call — closing: ${(error as Error).message}`);
+      next = { say: closingLine(context.hinglish), endCall: true, intent: "UNDECIDED" };
+    }
     transcript.push({ speaker: "BOA", text: next.say });
     const index = boaTurnsSoFar + 1;
 
@@ -209,6 +218,13 @@ export class VoiceController {
       throw new ForbiddenException({ error: "Signature did not verify." });
     }
   }
+}
+
+/** What Boa says when she cannot say what she meant to. */
+function closingLine(hinglish: boolean): string {
+  return hinglish
+    ? "Maaf kijiye, line mein kuch dikkat aa rahi hai. Payment link aapke WhatsApp par hai — jab aapko theek lage, wahan se kar dijiye. Dhanyavaad."
+    : "Sorry, the line is giving us trouble. The payment link is on your WhatsApp whenever it suits you. Thank you.";
 }
 
 function twiml(inner: string): string {
