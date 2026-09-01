@@ -311,7 +311,16 @@ Three tiers with different contracts:
 |---|---|---|
 | Unit + e2e (hermetic) | ~1,150 + 50 | No `.env`, no connections, nothing dials out. E2E substitutes an in-memory Prisma. |
 | Integration | dozens of suites | Real Neon + real Redis; concurrency races, redelivery, quiet hours, ledger triggers, batch reproducibility. |
-| Live probes | scripted | Real channels against the deployed system; several bugs only these found. |
+| Live probes | scripted | Real channels and a real browser against the running system; several bugs only these found. |
+
+The browser tier earns its place. Two defects survived every layer below it because
+every layer below it was correct: the Case Detail override buttons did nothing when
+pressed in the second between paint and hydration — the route, the gate and the ledger
+all worked when called directly — and an `sr-only` label escaped a scroll container and
+dragged the whole document 1,247px wide on a phone. Both are now guarded by browser
+checks: one asserts a button is disabled before hydration and works on the first click
+after it; the other sweeps eight routes at three viewport widths asserting the document
+never exceeds the viewport.
 
 Two philosophies, learned the hard way and now enforced deliberately:
 

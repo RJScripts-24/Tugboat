@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 
 import { ChalkRule } from "@/components/dashboard/chalk";
 import { CheckIcon, CloseIcon, EscalateIcon } from "@/components/dashboard/icons";
@@ -70,6 +70,12 @@ export function ApprovalsView({
 }) {
   const router = useRouter();
   const [busy, startTransition] = useTransition();
+
+  // Decision buttons stay disabled until React has hydrated: a click before the
+  // handlers attach dies silently, and on this page that reads as a decision
+  // that was swallowed (same guard as the Case Detail overrides).
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
 
   // A case escalating while you watch: `approval.pending` arrives on the
   // approvals room and the page re-reads the queue. The seeded version of this
@@ -344,7 +350,7 @@ export function ApprovalsView({
               <li key={request.id}>
                 <RequestCard
                   request={request}
-                  busy={busy}
+                  busy={busy || !ready}
                   // Highlights a request that arrived in the last minute:
                   // whatever escalated while somebody was looking at the page.
                   live={request.requestedMinutesAgo < 1}

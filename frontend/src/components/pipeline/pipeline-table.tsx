@@ -61,7 +61,10 @@ export function PipelineTable({
   const router = useRouter();
 
   return (
-    <div className="scroll-thin overflow-x-auto">
+    // `relative`, so absolute descendants (the sr-only header label) position
+    // inside this scrollbox instead of against the document — without it the
+    // hidden span lands past the viewport and widens the whole page on phones.
+    <div className="scroll-thin relative overflow-x-auto">
       <table className="optable">
         <thead>
           <tr>

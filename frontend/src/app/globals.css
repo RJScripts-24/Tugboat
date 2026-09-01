@@ -1298,7 +1298,17 @@
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--color-txt-faint);
+  /* Held on one line where there is room, and allowed to wrap where there is
+     not: the longest of these captions is wider than a phone, and `nowrap`
+     alone pushed the whole page sideways. */
   white-space: nowrap;
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .policy-chip {
+    white-space: normal;
+  }
 }
 
 /*

@@ -106,7 +106,7 @@ function TypeSegments({
   ];
 
   return (
-    <div className="flex items-center gap-4">
+    <div className="scroll-thin flex items-center gap-4 overflow-x-auto">
       {options.map((option) => {
         const active = filters.type === option.key;
         return (

@@ -412,6 +412,13 @@ function Overrides({
   stage: string;
   busy: boolean;
 }) {
+  // Until React has hydrated, these buttons have no click handler: a click in
+  // that window dies with no request, no error and no feedback, which reads as
+  // "the button is broken". Rendered disabled on the server and enabled on
+  // mount, the not-ready state is visible instead of silent.
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
+
   // A recovered case is finished and the API refuses to override one, so the
   // button is disabled rather than offered and then rejected. Halted and
   // exhausted cases stay closed here for the same reason they did before.
@@ -420,6 +427,7 @@ function Overrides({
   // an append-only log has no reason to forbid a second pause - it just
   // records one.
   const done = state.resolvedExternally;
+  const waiting = busy || !ready;
 
   return (
     <Section title="Human override" bodyClassName="px-5 py-4">
@@ -428,7 +436,7 @@ function Overrides({
           type="button"
           onClick={() => onOverride(state.paused ? "resume" : "pause")}
           className="btn-op-quiet"
-          disabled={busy || closed || done}
+          disabled={waiting || closed || done}
         >
           <PauseIcon className="h-[11px] w-[11px]" />
           {state.paused ? "Resume agent" : "Pause agent on this case"}
@@ -438,7 +446,7 @@ function Overrides({
           type="button"
           onClick={() => onOverride("escalate")}
           className="btn-op-quiet"
-          disabled={busy || closed || done || state.takenByHuman}
+          disabled={waiting || closed || done || state.takenByHuman}
         >
           <EscalateIcon className="h-[11px] w-[11px]" />
           Escalate to me
@@ -448,7 +456,7 @@ function Overrides({
           type="button"
           onClick={() => onOverride("call")}
           className="btn-op-quiet"
-          disabled={busy || closed || done || state.paused}
+          disabled={waiting || closed || done || state.paused}
         >
           <PhoneIcon className="h-[11px] w-[11px]" />
           Ask Boa to call now
@@ -458,7 +466,7 @@ function Overrides({
           type="button"
           onClick={() => onOverride("resolve")}
           className="btn-op-quiet"
-          disabled={busy || done}
+          disabled={waiting || done}
         >
           <RecoveredIcon className="h-[11px] w-[11px]" />
           Mark resolved externally

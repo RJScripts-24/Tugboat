@@ -225,7 +225,7 @@ function ActorSegments({
   ];
 
   return (
-    <div className="flex items-center gap-4">
+    <div className="scroll-thin flex items-center gap-4 overflow-x-auto">
       {options.map((option) => {
         const active = filters.actor === option.key;
         return (

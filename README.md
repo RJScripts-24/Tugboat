@@ -80,6 +80,13 @@ Ctrl+C stops both.
 npm run demo -- --batch=60 --promote     # also run a real 60-case batch on seed 42 and narrate it
 ```
 
+To drop one fresh live case into the pipeline — through the real signed webhook
+door, so it is detected, diagnosed, gated and worked like a production failure:
+
+```bash
+node scripts/seed-live-case.mjs --type payment --name "Asha" --email a@x.dev --phone +91xxxxxxxxxx --amount 8499
+```
+
 Every third-party key is optional. With none set, every channel lane runs its
 simulated adapter (labelled as such on every timeline) and the LLM runs the
 deterministic offline driver; the whole agent loop, the batch and the report work

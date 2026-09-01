@@ -56,7 +56,9 @@ export function LedgerTable({
   }, []);
 
   return (
-    <div className="overflow-x-auto">
+    // `relative`: absolute descendants must position inside this scrollbox,
+    // not against the document (see pipeline-table.tsx).
+    <div className="relative overflow-x-auto">
       <table className="optable">
         <thead>
           <tr>
