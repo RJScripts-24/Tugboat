@@ -134,7 +134,7 @@ Stopping rules, all configurable in the Policies UI, all measured in the evidenc
 | Rule | Bound | Note |
 |---|---|---|
 | Quiet hours | 21:00–09:00 IST, contact deferred to window open | TRAI DND-aligned; silent retries exempt; fixed IST arithmetic, no timezone library |
-| Attempt cap | 4 contacts per case (3 re-presentations for mandates) | only *executed* actions count against a bound |
+| Attempt cap | 4 contacts per case (3 re-presentations for mandates) | only *executed* actions count against a bound; the case closes `exhausted` and the agent sends nothing more, though a merchant may still take it over themselves |
 | Cool-down | 20h between contacts | never two nudges in one afternoon |
 | Per-channel cap | e.g. max 1 voice call | falls back to the next-cheapest channel |
 | Opt-out | STOP/UNSUBSCRIBE/Hindi equivalents → permanent halt, all channels | **cannot be disabled in the UI**; belongs to the customer, not the case — it survives across cases, days, and even a process crash (proven by accident when a test customer's weeks-old STOP halted a brand-new case) |
@@ -340,8 +340,10 @@ Two philosophies, learned the hard way and now enforced deliberately:
   the timeline UI directly; the case row carries derived state updated in the same
   transaction. Audit and replayability come free.
 - **ADR-3 — Explicit FSM; the LLM never transitions state.** One transition table,
-  illegal transitions throw — with one refinement: any stage may end in `recovered` when
-  the money arrives.
+  illegal transitions throw — with two refinements, both human or money shaped. Any
+  stage may end in `recovered` when the money arrives, and a case the agent
+  `exhausted` at its attempt cap may still be taken by a person (`exhausted →
+  escalated`). A case `halted` by an opt-out or a hostile reply may not.
 - **ADR-4 — Five-stage pipeline as injectable services.** Each stage independently
   testable and independently explainable.
 - **ADR-5 — Deterministic-first diagnosis.** A versioned rules table answers known

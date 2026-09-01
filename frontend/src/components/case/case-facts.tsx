@@ -57,7 +57,10 @@ export function CaseFacts({
   const moved = stampOf(record.updatedMinutesAgo);
 
   return (
-    <div className="space-y-3 lg:sticky lg:top-[92px]">
+    // Sticky only once there is a column beside it to be sticky *against*: the
+    // grid goes three-column at `xl`, so pinning at `lg` left a stacked layout
+    // with this card nailed to the top and the timeline scrolling through it.
+    <div className="space-y-3 xl:sticky xl:top-[92px]">
       <section className="surface p-5">
         <p className="chalk-hand text-[13px] uppercase tracking-[0.08em] text-txt-faint">
           {record.stage === "recovered" ? "Recovered" : "At risk"}

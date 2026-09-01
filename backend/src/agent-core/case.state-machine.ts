@@ -20,6 +20,16 @@ import type { CaseStage } from "@prisma/client";
  * between detection and diagnosis can all still pay, and a state machine that
  * refused to record that would be refusing to record revenue. The money
  * arriving is the one transition this table may never decline.
+ *
+ * `exhausted -> escalated` is the second exception, and it is a human one
+ * (D-150). A case that ran out of attempts is finished for the *agent* — it
+ * stays in `AGENT_TERMINAL` and nothing schedules another rung — but a merchant
+ * who wants to work it themselves has to be able to take it, or "compliant
+ * escalation" means only "escalation the agent chose". The cap is not weakened
+ * by this: every outbound action still passes the gate, which counts attempts
+ * against the pack and refuses a fifth. `halted` deliberately does NOT get the
+ * same door — a case closed by an opt-out or by hostility is not something a
+ * click should reopen.
  */
 const TRANSITIONS: Record<CaseStage, readonly CaseStage[]> = {
   detected: ["diagnosed", "escalated", "halted", "recovered"],
@@ -30,7 +40,7 @@ const TRANSITIONS: Record<CaseStage, readonly CaseStage[]> = {
   promised: ["recovered", "intervening", "escalated", "halted", "exhausted"],
   recovered: [],
   halted: ["recovered"],
-  exhausted: ["recovered"],
+  exhausted: ["recovered", "escalated"],
 };
 
 /** Stages from which the agent will take no further action of its own. */

@@ -429,6 +429,29 @@ function Overrides({
   const done = state.resolvedExternally;
   const waiting = busy || !ready;
 
+  /*
+   * A case that ran out of attempts can still be taken by a person (D-150).
+   * The agent is finished with it either way — nothing reschedules, and the
+   * gate still counts attempts against the pack — but "the agent gave up" and
+   * "nobody can pick this up" are different sentences, and only the first one
+   * is true. `halted` is deliberately excluded: an opt-out or a hostile reply
+   * closed that case, and a click should not reopen it.
+   */
+  const canEscalate = !done && !state.takenByHuman && stage !== "recovered" && stage !== "halted";
+
+  // Why each button is off, in the words the tooltip will use. A disabled
+  // control that does not say why is the same dead end as one that silently
+  // does nothing (B-73) — the click just fails earlier.
+  const reason = (blocked: boolean, why: string): string | undefined =>
+    !ready ? "Just a moment — the page is still loading" : blocked ? why : undefined;
+
+  const closedWhy =
+    stage === "recovered"
+      ? "This case is recovered — there is nothing left to take over"
+      : stage === "exhausted"
+        ? "The agent stopped at its attempt cap. Raise the cap in Policies if it should keep going"
+        : "This case was halted by a stopping rule";
+
   return (
     <Section title="Human override" bodyClassName="px-5 py-4">
       <div className="flex flex-wrap gap-2">
@@ -437,6 +460,10 @@ function Overrides({
           onClick={() => onOverride(state.paused ? "resume" : "pause")}
           className="btn-op-quiet"
           disabled={waiting || closed || done}
+          title={reason(
+            closed || done,
+            done ? "This case was closed outside Tugboat" : closedWhy,
+          )}
         >
           <PauseIcon className="h-[11px] w-[11px]" />
           {state.paused ? "Resume agent" : "Pause agent on this case"}
@@ -446,7 +473,15 @@ function Overrides({
           type="button"
           onClick={() => onOverride("escalate")}
           className="btn-op-quiet"
-          disabled={waiting || closed || done || state.takenByHuman}
+          disabled={waiting || !canEscalate}
+          title={reason(
+            !canEscalate,
+            done
+              ? "This case was closed outside Tugboat"
+              : state.takenByHuman
+                ? "You already have this case"
+                : closedWhy,
+          )}
         >
           <EscalateIcon className="h-[11px] w-[11px]" />
           Escalate to me
@@ -457,6 +492,14 @@ function Overrides({
           onClick={() => onOverride("call")}
           className="btn-op-quiet"
           disabled={waiting || closed || done || state.paused}
+          title={reason(
+            closed || done || state.paused,
+            done
+              ? "This case was closed outside Tugboat"
+              : closed
+                ? closedWhy
+                : "Boa is paused on this case — resume it first",
+          )}
         >
           <PhoneIcon className="h-[11px] w-[11px]" />
           Ask Boa to call now
@@ -467,6 +510,7 @@ function Overrides({
           onClick={() => onOverride("resolve")}
           className="btn-op-quiet"
           disabled={waiting || done}
+          title={reason(done, "This case was already closed outside Tugboat")}
         >
           <RecoveredIcon className="h-[11px] w-[11px]" />
           Mark resolved externally
@@ -476,9 +520,11 @@ function Overrides({
       <p className="mt-3 text-[11.5px] leading-[1.55] text-txt-faint">
         {done
           ? "This case was closed outside Tugboat. Its chain stays open to read and is closed to writes."
-          : closed
-            ? "This case has already closed, so only an external resolution can still be recorded against it."
-            : "Every override appends a row to this case's chain, with the operator who made it. Resuming appends a resume — nothing here can unwrite what is already on the ledger."}
+          : stage === "exhausted"
+            ? "Boa stopped here because it reached its attempt cap, not because it ran out of ideas. It will send nothing further — but you can take the case yourself, or raise the cap in Policies and let it keep going."
+            : closed
+              ? "This case has already closed, so only an external resolution can still be recorded against it."
+              : "Every override appends a row to this case's chain, with the operator who made it. Resuming appends a resume — nothing here can unwrite what is already on the ledger."}
       </p>
     </Section>
   );

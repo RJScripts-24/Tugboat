@@ -89,11 +89,36 @@ export class CaseOverridesService {
 
     // A call is asked for, not made: it goes through the planner and the gate
     // like any rung, so a paused or closed case has nothing to call about (D-145).
-    if (kind === "call" && record.pausedAt !== null) {
-      throw new BadRequestException({ error: `${toCaseRef(caseId)} is paused — resume it before asking Boa to call.` });
-    }
+    // Stage is read before the pause flag, because escalating also sets
+    // `pausedAt` — and "resume it first" is a confusing thing to tell somebody
+    // who handed the case to themselves rather than pausing it.
     if (kind === "call" && (record.stage === "halted" || record.stage === "exhausted")) {
-      throw new BadRequestException({ error: `${toCaseRef(caseId)} is ${record.stage}; the agent no longer works it.` });
+      throw new BadRequestException({
+        error: `${toCaseRef(caseId)} is ${record.stage} — the agent has stopped working it. Raise the attempt cap in Policies if it should keep going.`,
+        message: `${toCaseRef(caseId)} is ${record.stage}; the agent no longer works it.`,
+      });
+    }
+    if (kind === "call" && record.pausedAt !== null) {
+      throw new BadRequestException({
+        error: `${toCaseRef(caseId)} is paused — resume it before asking Boa to call.`,
+        message: `${toCaseRef(caseId)} is paused — resume it before asking Boa to call.`,
+      });
+    }
+
+    // Escalating IS the stage move. If the machine refuses it, there is nothing
+    // left for the override to do, and writing the ledger row anyway would put
+    // "a human took this case" on a chain beside a case that never moved — two
+    // surfaces disagreeing about one fact, which is the thing ADR-2 exists to
+    // prevent (B-75). Refuse before anything is written.
+    if (
+      kind === "escalate" &&
+      record.stage !== "escalated" &&
+      !this.machine.canTransition(record.stage, "escalated")
+    ) {
+      throw new BadRequestException({
+        error: `${toCaseRef(caseId)} is ${record.stage} and cannot be handed to a human from there.`,
+        message: `${toCaseRef(caseId)} is ${record.stage} and cannot be handed to a human from there.`,
+      });
     }
 
     const at = this.clock.now();
