@@ -82,7 +82,7 @@ export class TwilioVoiceAdapter implements ChannelAdapter {
       Record: "true",
       RecordingStatusCallback: `${base}/voice/recording/${callId}`,
       RecordingStatusCallbackMethod: "POST",
-      Timeout: "25",
+      Timeout: "40",
     });
 
     const auth = Buffer.from(`${twilio.accountSid}:${twilio.authToken}`).toString("base64");
