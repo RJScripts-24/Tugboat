@@ -24,6 +24,15 @@ function minutesAgo(date: Date): number {
  * rather than promising a channel and a time nothing has decided yet.
  */
 function nextActionLabel(record: Case): string {
+  // A pause is the next action, because it is the reason there isn't one. The
+  // column read "Waiting on the customer" on a case a merchant had just stood
+  // the agent down on, which is how a button that works reads as one that does
+  // not: the click landed, the ledger row landed, and the only surface the
+  // merchant was looking at said nothing had changed (D-151).
+  if (record.pausedAt && record.stage !== "escalated") {
+    return "Paused by you · nothing will be sent";
+  }
+
   switch (record.stage) {
     case "detected":
       return "Awaiting diagnosis";
@@ -34,7 +43,7 @@ function nextActionLabel(record: Case): string {
     case "waiting":
       return "Waiting on the customer";
     case "escalated":
-      return "Awaiting human approval";
+      return "Waiting on you in Approvals";
     case "promised":
       return "Promise check-in scheduled";
     case "halted":

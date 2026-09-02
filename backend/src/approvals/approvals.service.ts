@@ -46,6 +46,9 @@ const REJECTION_RESUMES: Record<ApprovalGate, boolean> = {
   b2b_high_value: false,
   confidence_below_threshold: false,
   hardship_language: false,
+  // "Don't pursue this one" is the whole question the handover gate asks, so a
+  // no is an answer rather than a deferral: the case halts (D-151).
+  escalated_to_human: false,
 };
 
 /** Gates whose approved action ends the case rather than resuming it. */
@@ -56,6 +59,8 @@ const APPROVAL_CLOSES: Record<ApprovalGate, boolean> = {
   // A hardship message is sent once and followed by nothing — the whole point
   // of the ask is that this customer is not chased again.
   hardship_language: true,
+  // A yes here is the opposite: the case goes back on the ladder.
+  escalated_to_human: false,
 };
 
 export type RaiseInput = {
@@ -65,6 +70,12 @@ export type RaiseInput = {
   channel: PolicyChannel;
   concessionPaise?: number;
   discountPercent?: number;
+  /**
+   * Why the case stopped, in the escalation's own words. Only the handover gate
+   * carries one — the other four *are* the reason, and repeating it on the card
+   * would be the rule quoting itself.
+   */
+  reason?: string | null;
 };
 
 export type ApprovalRequestView = {
@@ -208,6 +219,7 @@ export class ApprovalsService {
         originId: record.originId,
         lastSentimentScore: record.lastSentimentScore,
         channel: input.channel,
+        handoverReason: input.reason ?? null,
       },
       input.gate,
       pack,
@@ -359,9 +371,24 @@ export class ApprovalsService {
   async approve(
     merchantId: string,
     approvalId: string,
-    input: { by: string; draftLines?: string[]; draftSubject?: string },
-  ): Promise<{ approval: DecidedApprovalView; draftEdited: boolean }> {
+    input: { by: string; draftLines?: string[]; draftSubject?: string; restart?: boolean },
+  ): Promise<{ approval: DecidedApprovalView; draftEdited: boolean; restarted: boolean }> {
     const row = await this.claimForDecision(merchantId, approvalId);
+
+    /*
+     * "Work it again from the start" (D-157).
+     *
+     * Only on the handover gate, and deliberately: that is the one card whose
+     * question is whether the agent carries on, and the only one where "yes,
+     * and give it a fresh run" is a coherent answer. Approving a hardship
+     * stand-down while resetting the caps would be the product contradicting
+     * itself in a single click.
+     */
+    const restart = Boolean(input.restart) && row.gate === "escalated_to_human";
+    if (input.restart && !restart) {
+      const message = `A ${row.gate} request cannot restart a case; only a handover can.`;
+      throw new BadRequestException({ error: message, message });
+    }
     const draft = row.draft as unknown as DraftMessage;
 
     // The way out is not the approver's to delete. A merchant may rewrite a
@@ -391,6 +418,14 @@ export class ApprovalsService {
       draftEdited: edited,
       optOutRestored: guarded.restored,
       draft: approvedDraft,
+      // Taking a case is a pause with a name on it, and the gate refuses every
+      // outbound action while `pausedAt` is set. Approving the handover ask is
+      // the merchant undoing their own hold, so the hold is lifted in the same
+      // transaction as the decision — otherwise the release they just
+      // authorised would be refused by it, and a "carry on" would halt the
+      // case it was meant to resume (D-151).
+      liftHold: row.gate === "escalated_to_human",
+      restart,
     });
 
     await this.queue.enqueue(
@@ -404,7 +439,7 @@ export class ApprovalsService {
       { delayMs: 0 },
     );
 
-    return { approval: decided, draftEdited: edited };
+    return { approval: decided, draftEdited: edited, restarted: restart };
   }
 
   /**
@@ -507,6 +542,10 @@ export class ApprovalsService {
       draftEdited: boolean;
       optOutRestored?: boolean;
       draft: DraftMessage;
+      /** Clear `pausedAt` with the decision — see the caller. */
+      liftHold?: boolean;
+      /** Put the case back to attempt zero with the decision (D-157). */
+      restart?: boolean;
     },
   ): Promise<DecidedApprovalView> {
     const decidedAt = this.clock.now();
@@ -520,6 +559,23 @@ export class ApprovalsService {
     const updated = await withSeqRetry(
       () =>
         this.prisma.transaction(async (tx) => {
+          if (input.liftHold || input.restart) {
+            await tx.case.update({
+              where: { id: row.caseId },
+              data: {
+                ...(input.liftHold ? { pausedAt: null } : {}),
+                // The counters, and the instant every action-derived bound is
+                // measured from now on. The customer's own protections — the
+                // opt-out, the hardship flag — are untouched on purpose: a
+                // merchant may give the agent another run at a case, and may
+                // not give it another run at somebody who said stop.
+                ...(input.restart
+                  ? { attemptsUsed: 0, restartedAt: decidedAt, discountRequestedAt: null }
+                  : {}),
+              },
+            });
+          }
+
           const approval = await tx.approval.update({
             where: { id: row.id },
             data: {
@@ -565,12 +621,24 @@ export class ApprovalsService {
                       },
                     ]
                   : []),
+                ...(input.restart
+                  ? [
+                      {
+                        label: "Case restarted",
+                        value: `Attempts back to 0 of ${row.case.attemptCap} · channel caps, cool-down and re-presentation count measured from now · the opt-out and hardship blocks are untouched`,
+                      },
+                    ]
+                  : []),
                 {
                   label: "Effect",
                   value: approved
                     ? APPROVAL_CLOSES[row.gate]
                       ? "The message is sent once and the case closes as handled"
-                      : `The gate re-runs against the approved action and the case continues at attempt ${row.case.attemptsUsed + 1} of ${row.case.attemptCap}`
+                      : input.restart
+                        ? `The hold is lifted, the case starts again at attempt 1 of ${row.case.attemptCap}, and the gate runs against the reset bounds`
+                        : input.liftHold
+                        ? `The hold is lifted, the gate re-runs, and Boa continues at attempt ${row.case.attemptsUsed + 1} of ${row.case.attemptCap}`
+                        : `The gate re-runs against the approved action and the case continues at attempt ${row.case.attemptsUsed + 1} of ${row.case.attemptCap}`
                     : REJECTION_RESUMES[row.gate]
                       ? "No concession was made · the case continues on the standard playbook"
                       : "Boa stands down · the case is closed to the agent",

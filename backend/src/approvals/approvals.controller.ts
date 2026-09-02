@@ -55,13 +55,14 @@ export class ApprovalsController {
     @Param("id") id: string,
     @Body() body: ApproveApprovalDto,
   ) {
-    const { approval, draftEdited } = await this.approvals.approve(merchant.sub, id, {
+    const { approval, draftEdited, restarted } = await this.approvals.approve(merchant.sub, id, {
       by: merchant.name,
       draftLines: body.draftLines,
       draftSubject: body.draftSubject,
+      restart: body.restart,
     });
 
-    return { ok: true, approval, draftEdited, released: "queued" as const };
+    return { ok: true, approval, draftEdited, restarted, released: "queued" as const };
   }
 
   @Post(":id/reject")

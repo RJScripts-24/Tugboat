@@ -53,6 +53,12 @@ export class AgentWorker implements OnApplicationBootstrap {
       return this.executor.releaseApproved(job.approvalId);
     }
 
+    // A handover raises a question, it does not take a step: the case has
+    // already stopped and the merchant is being asked whether it starts again.
+    if (job.kind === "case.handover") {
+      return this.executor.raiseHandover(job.caseId, job.reason);
+    }
+
     return this.executor.step(job.caseId, { expectAttempt: job.expectAttempt, channel: job.channel });
   }
 }

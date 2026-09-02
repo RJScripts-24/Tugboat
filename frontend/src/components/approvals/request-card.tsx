@@ -35,6 +35,8 @@ export type SessionDecision = {
   at: string;
   /** True when the operator rewrote the draft before releasing it. */
   edited: boolean;
+  /** True when the yes also put the case back to attempt zero (D-157). */
+  restarted?: boolean;
 };
 
 const CHANNEL: Record<
@@ -66,6 +68,7 @@ export function RequestCard({
   decision,
   draftLines,
   onApprove,
+  onRestart,
   onReject,
   onEditDraft,
   live = false,
@@ -76,6 +79,8 @@ export function RequestCard({
   /** The draft as it stands now - edited by the operator, or as planned. */
   draftLines: string[];
   onApprove: (edited: boolean) => void;
+  /** Yes, and work it again from the start — handover requests only (D-157). */
+  onRestart: (edited: boolean) => void;
   onReject: (reason: string) => void;
   onEditDraft: (lines: string[] | null) => void;
   /** This request arrived while the page was open. */
@@ -211,6 +216,25 @@ export function RequestCard({
                   <CheckIcon className="h-[13px] w-[13px]" />
                   Approve &amp; release
                 </button>
+
+                {/* The second kind of yes, and only where it means something:
+                    a handover is the one card that asks whether the agent
+                    carries on, so it is the one card where "yes, from the
+                    top" is an answer (D-157). It is a quiet button rather
+                    than a gold one because resetting a customer's contact
+                    budget should take a deliberate read, not a reflex. */}
+                {request.gate === "escalated_to_human" ? (
+                  <button
+                    type="button"
+                    onClick={() => onRestart(edited)}
+                    className="btn-op-quiet"
+                    disabled={busy}
+                    title={`Attempts back to 0 of ${request.attemptCap}; the channel caps and the cool-down count from now. An opt-out is not cleared.`}
+                  >
+                    <RetryIcon className="h-[12px] w-[12px]" />
+                    Restart the case
+                  </button>
+                ) : null}
 
                 <button
                   type="button"
@@ -508,11 +532,25 @@ function Decided({
         ) : (
           <CloseIcon className="h-[13px] w-[13px] text-halted" />
         )}
-        {approved ? "Approved" : "Rejected"} · {decision.at} IST
+        {approved ? (decision.restarted ? "Restarted" : "Approved") : "Rejected"} · {decision.at}{" "}
+        IST
       </p>
 
       {approved ? (
         <ol className="mt-3 space-y-2.5">
+          {decision.restarted ? (
+            <li className="flex gap-3">
+              <span className="mono mt-[2px] shrink-0 text-[10.5px] text-txt-faint">00</span>
+              <span className="min-w-0">
+                <span className="text-[12.5px] text-txt-dim">Counters reset</span>
+                <span className="block text-[11.5px] leading-[1.5] text-txt-faint">
+                  Attempts back to 0 of {request.attemptCap}; the channel caps, the cool-down and
+                  the re-presentation count are measured from now. The opt-out and hardship blocks
+                  are untouched, and every message already sent stays on the timeline.
+                </span>
+              </span>
+            </li>
+          ) : null}
           {request.resumeSteps.map((step, i) => (
             <li key={step.label} className="flex gap-3">
               <span className="mono mt-[2px] shrink-0 text-[10.5px] text-txt-faint">

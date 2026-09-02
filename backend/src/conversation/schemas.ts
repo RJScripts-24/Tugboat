@@ -86,6 +86,19 @@ export const liveTurnSchema = z
     say: z.string().min(1).max(400),
     end_call: z.boolean(),
     intent: z.enum(["PROMISED_TO_PAY", "HARDSHIP_DECLARED", "UNDECIDED"]),
+    /**
+     * The day the customer actually named, as YYYY-MM-DD, or null when they
+     * named none.
+     *
+     * Optional rather than required on purpose. A missing field here falls back
+     * to the old horizon; a schema failure on a live call ends with Boa hanging
+     * up on a real customer (B-72), and no date is not worth that.
+     */
+    promise_date: z
+      .string()
+      .regex(/^d{4}-d{2}-d{2}$/)
+      .nullable()
+      .optional(),
   })
   .strict();
 

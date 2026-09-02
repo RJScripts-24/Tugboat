@@ -128,6 +128,8 @@ export function ApprovalsView({
       verdict: "approved" | "rejected",
       reason: string | null,
       edited: boolean,
+      /** A yes that also puts the case back to attempt zero (D-157). */
+      restart = false,
     ) => {
       const at = new Intl.DateTimeFormat("en-GB", {
         timeZone: "Asia/Kolkata",
@@ -139,19 +141,23 @@ export function ApprovalsView({
 
       setDecisions((current) => ({
         ...current,
-        [request.id]: { verdict, reason, at, edited },
+        [request.id]: { verdict, reason, at, edited, restarted: restart },
       }));
 
       startTransition(async () => {
         const result =
           verdict === "approved"
-            ? await approveRequest(request.id, {
-                // The edited body, when the approver rewrote it. The API
-                // restores the opt-out line if the edit removed it, rather than
-                // refusing the edit (D-68).
-                lines: edited ? edits[request.id] : undefined,
-                subject: request.draft.subject,
-              })
+            ? await approveRequest(
+                request.id,
+                {
+                  // The edited body, when the approver rewrote it. The API
+                  // restores the opt-out line if the edit removed it, rather
+                  // than refusing the edit (D-68).
+                  lines: edited ? edits[request.id] : undefined,
+                  subject: request.draft.subject,
+                },
+                { restart },
+              )
             : await rejectRequest(request.id, reason ?? "No reason given");
 
         if (!result.ok) {
@@ -174,9 +180,10 @@ export function ApprovalsView({
         pushToast(
           verdict === "approved"
             ? {
-                title: `Approved \u00b7 ${request.caseId}`,
-                detail:
-                  "Released to the executor \u2014 the gate re-runs before anything is sent, and the decision is on the case's ledger chain",
+                title: `${restart ? "Restarted" : "Approved"} \u00b7 ${request.caseId}`,
+                detail: restart
+                  ? `Attempts back to 0 of ${request.attemptCap} and the channel caps counted from now \u2014 the gate still re-runs before anything is sent, and an opt-out would still stop it`
+                  : "Released to the executor \u2014 the gate re-runs before anything is sent, and the decision is on the case's ledger chain",
                 tone: "plain",
               }
             : {
@@ -357,6 +364,7 @@ export function ApprovalsView({
                   decision={decisions[request.id] ?? null}
                   draftLines={edits[request.id] ?? request.draft.lines}
                   onApprove={(edited) => decide(request, "approved", null, edited)}
+                  onRestart={(edited) => decide(request, "approved", null, edited, true)}
                   onReject={(reason) => decide(request, "rejected", reason, false)}
                   onEditDraft={(lines) =>
                     setEdits((current) => {
@@ -443,8 +451,9 @@ function Empty() {
         Nothing is waiting on you
       </p>
       <p className="mx-auto mt-2 max-w-[440px] text-[12.5px] leading-[1.6] text-txt-dim">
-        Every case in the batch is inside the bounds Boa is allowed to work in. A discount, a
-        high-value receivable, a hardship reply or a diagnosis under the floor would land here.
+        Every case is inside the bounds Boa is allowed to work in. A discount, a high-value
+        receivable, a hardship reply or a diagnosis under the floor would land here — and so does
+        any case a person takes, or one the agent stops on without a rule of its own to quote.
       </p>
       <Link href="/policies" className="disclose mt-4 inline-flex">
         See which gates would stop it →
@@ -460,8 +469,9 @@ function Cleared() {
       <p className="chalk-hand text-[15px] uppercase tracking-[0.06em] text-txt">Queue cleared</p>
       <p className="mx-auto mt-1.5 max-w-[520px] text-[12px] leading-[1.6] text-txt-dim">
         Every request has an answer and a reason against it. The cases you released are back with
-        Boa, inside the same caps they had before — approving does not widen a bound, it only
-        unblocks the one action you read.
+        Boa inside the same caps they had before — approving does not widen a bound, it only
+        unblocks the one action you read. A restart is the one exception, and it says so on the
+        card and on the case&rsquo;s own timeline.
       </p>
     </section>
   );

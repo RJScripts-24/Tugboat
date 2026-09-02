@@ -35,6 +35,12 @@ const REJECTION_REASONS: Record<ApprovalGateName, readonly string[]> = {
     "Collections will take this one from here",
     "The terms are wrong · I will make the offer myself",
   ],
+  escalated_to_human: [
+    "I am handling this customer myself",
+    "Not worth another attempt — close it",
+    "Already settled outside Tugboat",
+    "Wrong contact details · do not chase this one",
+  ],
 };
 
 export function rejectionReasonsFor(gate: ApprovalGateName): string[] {

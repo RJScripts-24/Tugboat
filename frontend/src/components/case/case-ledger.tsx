@@ -24,6 +24,7 @@ import {
   type CaseDetail,
 } from "@/lib/case-detail-data";
 import type { CaseState, OverrideKind } from "@/lib/event-store";
+import { verifyRow } from "@/lib/ledger-verify";
 
 /**
  * The right column: what this case ended up worth, what it cost to get there,
@@ -150,9 +151,16 @@ function OutcomeCard({ detail, state }: { detail: CaseDetail; state: CaseState }
 
       {state.last ? <OverrideNote last={state.last} appended={state.appended} /> : null}
 
-      {record.stage === "escalated" && state.last === null ? (
+      {/* Whoever put it there. Taking a case used to hide this link — the note
+          above said the queue held the case and gave you no way to reach it,
+          on the one page where the question "so what happens now?" is asked
+          (D-151). Every escalated case has a card now, so every escalated case
+          gets the link. */}
+      {record.stage === "escalated" ? (
         <Link href="/approvals" className="disclose mt-3.5">
-          This case is waiting in the approvals queue →
+          {state.last === "escalate"
+            ? "Answer it in the approvals queue →"
+            : "This case is waiting in the approvals queue →"}
         </Link>
       ) : null}
     </Section>
@@ -163,7 +171,8 @@ function OverrideNote({ last, appended }: { last: OverrideKind; appended: number
   const copy = {
     pause: "You paused Boa on this case. Nothing further will be sent until it is resumed.",
     resume: "You resumed Boa. The pause is still on the ledger — it was appended over, not undone.",
-    escalate: "You took this case. Boa has stood down and the approvals queue holds it.",
+    escalate:
+      "You took this case. Boa has stood down, and the approvals queue is now asking you whether it should carry on or close the case.",
     resolve: "Marked resolved outside Tugboat. The case is closed and no action will follow.",
     call: "You asked Boa to call. The gate answers first — quiet hours, opt-out and the one-call cap — and the call goes out at the next moment it allows.",
   }[last];
@@ -215,8 +224,8 @@ function CostCard({ detail }: { detail: CaseDetail }) {
       <dl className="space-y-2">
         <Line
           label="Actually spent"
-          value={<span className="mono">₹0.00</span>}
-          note="Gemini, Groq, Resend and the Twilio sandbox, all on free tiers"
+          value={<span className="mono">{paiseText(outcome.spentPaise)}</span>}
+          note="Metered from this case rather than assumed — Groq, Resend and the Twilio sandbox bill nothing, a real send does"
         />
         <Line
           label="LLM, at production prices"
@@ -290,17 +299,37 @@ const ACTOR_TONE = {
  * panel, by design.
  */
 function AuditPanel({ caseId, rows }: { caseId: string; rows: AuditEntry[] }) {
-  const [state, setState] = useState<"idle" | "running" | "done">("done");
+  const [state, setState] = useState<"idle" | "running" | "checked" | "broken">("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => () => {
     if (timer.current) clearTimeout(timer.current);
   }, []);
 
+  // A new chain is an unanswered question again.
+  useEffect(() => setState("idle"), [rows]);
+
+  /*
+   * This was a 900ms timer that flipped the label to "Chain verified", on a
+   * panel whose own caption explains that re-verifying recomputes the chain
+   * from the stored payloads. It could not have done that: the rows it is
+   * handed carried no digest preimage (B-81). They carry one now, and this
+   * recomputes every digest with the same function the Audit Explorer uses,
+   * then checks each row links to the one before it.
+   */
   const verify = useCallback(() => {
     setState("running");
-    timer.current = setTimeout(() => setState("done"), 900);
-  }, []);
+    // One frame, so the spinner paints before the hashing blocks the thread.
+    timer.current = setTimeout(() => {
+      let previous: string | null = null;
+      const ok = rows.every((row) => {
+        const linked = previous === null || row.prevHash === previous;
+        previous = row.hash;
+        return verifyRow(row).matches && linked;
+      });
+      setState(ok ? "checked" : "broken");
+    }, 16);
+  }, [rows]);
 
   return (
     <Section
@@ -312,10 +341,20 @@ function AuditPanel({ caseId, rows }: { caseId: string; rows: AuditEntry[] }) {
               <ChainIcon className="h-[12px] w-[12px] animate-spin" />
               Verifying
             </>
-          ) : (
+          ) : state === "checked" ? (
             <>
               <CheckIcon className="h-[12px] w-[12px]" />
               Chain verified
+            </>
+          ) : state === "broken" ? (
+            <>
+              <ChainIcon className="h-[12px] w-[12px]" />
+              Chain broken
+            </>
+          ) : (
+            <>
+              <ChainIcon className="h-[12px] w-[12px]" />
+              Verify chain
             </>
           )}
         </button>

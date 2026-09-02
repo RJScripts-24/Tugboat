@@ -93,18 +93,36 @@ export async function overrideCase(
 export type ApprovalDecisionResult = {
   ok: true;
   draftEdited?: boolean;
+  /** The case was put back to attempt zero with the decision (D-157). */
+  restarted?: boolean;
   /** "queued": the gate runs again on the release, so this is a permission, not a send. */
   released?: "queued";
 };
 
+/**
+ * A yes.
+ *
+ * `restart` is the second kind of yes (D-157): work the case again from the
+ * start, with the attempts back to zero and the channel caps, cool-down and
+ * re-presentation count counted from now. The API accepts it only on a
+ * handover request, and it cannot clear an opt-out.
+ */
 export async function approveRequest(
   id: string,
   draft?: { lines?: string[]; subject?: string },
+  options?: { restart?: boolean },
 ): Promise<ActionResult<ApprovalDecisionResult>> {
   try {
     const data = await apiFetch<ApprovalDecisionResult>(
       `/approvals/${encodeURIComponent(id)}/approve`,
-      { method: "POST", body: { draftLines: draft?.lines, draftSubject: draft?.subject } },
+      {
+        method: "POST",
+        body: {
+          draftLines: draft?.lines,
+          draftSubject: draft?.subject,
+          ...(options?.restart ? { restart: true } : {}),
+        },
+      },
     );
 
     revalidateAfterDecision();

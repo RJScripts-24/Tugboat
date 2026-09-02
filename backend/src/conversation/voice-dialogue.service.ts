@@ -114,6 +114,8 @@ export type LiveTurn = {
   say: string;
   endCall: boolean;
   intent: "PROMISED_TO_PAY" | "HARDSHIP_DECLARED" | "UNDECIDED";
+  /** The day the customer named, YYYY-MM-DD, or null when they named none (D-152). */
+  promiseDate: string | null;
 };
 
 /**
@@ -130,19 +132,34 @@ const LIVE_SYSTEM_PROMPT = [
   "If the person says money is tight, accept it immediately and close warmly without pressing.",
   "Match the language named in the context: Hinglish means conversational Hindi written in Latin script.",
   "Answer only with JSON of exactly this shape and nothing else:",
-  '{"say": string, "end_call": boolean, "intent": "PROMISED_TO_PAY" | "HARDSHIP_DECLARED" | "UNDECIDED"}',
+  '{"say": string, "end_call": boolean, "intent": "PROMISED_TO_PAY" | "HARDSHIP_DECLARED" | "UNDECIDED", "promise_date": "YYYY-MM-DD" | null}',
 ].join(" ");
 
 const LIVE_ADDENDUM = [
   "",
   "This is a LIVE phone call. The customer's words arrive from speech recognition and may be garbled, partial or empty.",
   "Reply with ONE short spoken line — at most two sentences. Work through, in order: greet and confirm who you are speaking to;",
-  "state the pending amount plainly; ask whether they can pay and by when; if they name a day, confirm it and say the payment link is on their WhatsApp;",
+  "state the pending amount plainly; ask whether they can pay and by when; if they name a day, confirm it and say you are sending the payment link to their WhatsApp now;",
   "if they cannot pay or describe hardship, acknowledge it without any pressure and close warmly; if they ask you to stop calling, apologise and close.",
   "Never threaten, never mention fees, penalties or consequences.",
   "Set end_call to true once a date has been agreed, or they have declined, or they asked you to stop, or this is your fifth line.",
   "Set intent to PROMISED_TO_PAY once a date has been agreed, HARDSHIP_DECLARED when they cannot pay or asked you to stop, otherwise UNDECIDED.",
+  "Set promise_date to the day THE CUSTOMER named, resolved against Today in the context and written as YYYY-MM-DD.",
+  "\"aaj\", \"aaj raat\" or \"tonight\" is Today. \"kal\" is the day after Today. A weekday name is the next such day.",
+  "Use the date you suggested ONLY if they agreed to it in their own words. If no day was named, set promise_date to null.",
 ].join("\n");
+
+/**
+ * Today, in IST, as YYYY-MM-DD.
+ *
+ * The model has to resolve "aaj raat ko" against something, and a live call
+ * happens in real time by definition — so this is the wall clock rather than
+ * the batch clock, and the arithmetic is fixed-offset for the same reason the
+ * quiet-hours check is (D-44).
+ */
+function istDate(at: Date): string {
+  return new Date(at.getTime() + 5.5 * 60 * 60_000).toISOString().slice(0, 10);
+}
 
 @Injectable()
 export class VoiceDialogueService {
@@ -192,7 +209,8 @@ export class VoiceDialogueService {
       `Merchant: ${context.merchantName}`,
       `Amount: ${context.amountLabel}`,
       `Language: ${context.hinglish ? "hinglish" : "english"}`,
-      `Promise date: ${context.promiseDateLabel}`,
+      `Today: ${istDate(new Date())}`,
+      `Date you may suggest if they ask for one: ${context.promiseDateLabel}`,
       "Conversation so far:",
       transcript.length === 0
         ? "(the call has just connected)"
@@ -205,7 +223,12 @@ export class VoiceDialogueService {
         liveTurnSchema,
         { caseId: context.caseId },
       );
-      return { say: result.value.say, endCall: result.value.end_call, intent: result.value.intent };
+      return {
+        say: result.value.say,
+        endCall: result.value.end_call,
+        intent: result.value.intent,
+        promiseDate: result.value.promise_date ?? null,
+      };
     } catch (error) {
       this.logger.error(`Live dialogue turn failed for case ${context.caseId}: ${(error as Error).message}`);
       throw new VoiceDialogueError("The dialogue engine could not produce the next line of the call.");

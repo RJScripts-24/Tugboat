@@ -61,7 +61,12 @@ export class VoiceCallsService {
   speak(
     id: string,
     transcript: Turn[],
-    patch: { status: VoiceCallStatus; intent?: VoiceIntent | "UNDECIDED" },
+    patch: {
+      status: VoiceCallStatus;
+      intent?: VoiceIntent | "UNDECIDED";
+      /** The day the customer named, once they name one. Never unset. */
+      promisedFor?: Date | null;
+    },
   ): Promise<VoiceCall> {
     return this.prisma.voiceCall.update({
       where: { id },
@@ -69,6 +74,9 @@ export class VoiceCallsService {
         transcript: transcript as unknown as Prisma.InputJsonValue,
         status: patch.status,
         ...(patch.intent !== undefined ? { intent: patch.intent } : {}),
+        // Only ever written, never cleared: a later turn that mentions no date
+        // must not erase the date an earlier one heard.
+        ...(patch.promisedFor ? { promisedFor: patch.promisedFor } : {}),
       },
     });
   }

@@ -324,6 +324,9 @@ export class ReportService {
           abstained: row.rootCause === "UNKNOWN",
           closed: row.stage === "halted" || row.stage === "exhausted",
         })),
+        // The pack this run was pinned to, so the table states the bounds that
+        // were actually enforced rather than the ones that shipped (D-156).
+        input.pack,
       ),
       compliance: compliance.block,
       escalations: this.escalationShape(approvals, input.startedAtMs + input.horizonMs),

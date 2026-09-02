@@ -1,4 +1,5 @@
 import type { PolicyCheck } from "../policy/policy-gate.evaluate";
+import type { PolicyPack } from "../policy/policy-pack";
 
 /**
  * Every rule in the pack, with the number of times it stopped something.
@@ -175,7 +176,52 @@ const TERMINAL_PRECEDENCE = [
   "deadline",
 ] as const;
 
-export function countFirings(decisions: DecisionRow[], closed: ClosedCase[]): RuleFiring[] {
+/**
+ * The rule as the pack in force actually states it (D-156).
+ *
+ * The authored text in `RULE_SOURCES` is a fallback and a shape, not the
+ * truth: these numbers are editable in the Policies page, and a table that
+ * reads "20h" while the gate is enforcing six describes a policy nobody is
+ * running (B-79). The pack passed here is the one the run was pinned to, so a
+ * historical report keeps saying what was in force when it was produced.
+ */
+function ruleLabel(source: RuleSource, pack: PolicyPack | undefined): string {
+  if (!pack) return source.rule;
+
+  switch (source.key) {
+    case "quiet_hours":
+      return `Quiet hours · ${clock(pack.quiet.startMinutes)}–${clock(pack.quiet.endMinutes)} IST`;
+    case "cool_down":
+      return `Cool-down · ${pack.contact.coolDownHours}h between contacts`;
+    case "channel_cap": {
+      const calls = pack.contact.channelCaps.VOICE;
+      return `Per-channel cap · max ${calls} voice call${calls === 1 ? "" : "s"}`;
+    }
+    case "mandate_cap":
+      return `Mandate re-presentation · ${pack.mandate.maxPerCycle} per cycle, spaced`;
+    case "confidence_floor":
+      return `Confidence floor · ${pack.escalation.confidenceFloor.toFixed(2)}`;
+    case "attempt_cap":
+      return `Attempt cap · ${pack.contact.maxAttempts} per case, ${pack.mandate.maxPerCycle} for mandates`;
+    default:
+      // Opt-out, sentiment, deadline and the human override carry no numbers,
+      // so their authored wording is already the whole rule.
+      return source.rule;
+  }
+}
+
+/** Minutes past midnight as "21:00". */
+function clock(minutes: number): string {
+  const h = Math.floor(minutes / 60) % 24;
+  const m = minutes % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+export function countFirings(
+  decisions: DecisionRow[],
+  closed: ClosedCase[],
+  pack?: PolicyPack,
+): RuleFiring[] {
   const abstentions = closed.filter((row) => row.abstained).length;
   const blockedBy = new Map<number, Set<string>>();
 
@@ -225,7 +271,7 @@ export function countFirings(decisions: DecisionRow[], closed: ClosedCase[]): Ru
     if (source.terminal) {
       return {
         key: source.key,
-        rule: source.rule,
+        rule: ruleLabel(source, pack),
         effect: source.effect,
         fired: terminal[source.key] ?? 0,
         terminal: true,
@@ -239,7 +285,7 @@ export function countFirings(decisions: DecisionRow[], closed: ClosedCase[]): Ru
     if (source.key === "confidence_floor") {
       return {
         key: source.key,
-        rule: source.rule,
+        rule: ruleLabel(source, pack),
         effect: source.effect,
         fired: abstentions,
         terminal: false,
@@ -259,7 +305,7 @@ export function countFirings(decisions: DecisionRow[], closed: ClosedCase[]): Ru
 
     return {
       key: source.key,
-      rule: source.rule,
+      rule: ruleLabel(source, pack),
       effect: source.effect,
       fired,
       terminal: false,

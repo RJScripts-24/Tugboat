@@ -30,6 +30,7 @@ const GATES: ApprovalGateName[] = [
   "b2b_high_value",
   "confidence_below_threshold",
   "hardship_language",
+  "escalated_to_human",
 ];
 
 function subject(overrides: Partial<AskSubject> = {}): AskSubject {
@@ -296,5 +297,57 @@ describe("The ask follows the pack, not a constant", () => {
 
     const ask = buildAsk(subject({ amountPaise: 9_000 * RUPEE }), "b2b_high_value", tightened);
     expect(ask.headline).toContain("₹5,000");
+  });
+});
+
+describe("The handover ask — carry on, or stand down", () => {
+  it("asks the plain question and shows the message a yes would send", () => {
+    const ask = buildAsk(
+      subject({ handoverReason: "Taken from the Control Tower by Demo Merchant" }),
+      "escalated_to_human",
+      V4,
+    );
+
+    expect(ask.headline).toContain("Carry on");
+    expect(ask.justification[0]).toContain("Taken from the Control Tower");
+    expect(CUSTOMER_FACING).toContain(ask.draft.channel);
+    expect(ask.ifRejected).toContain("halted");
+    // A handover is never a concession: the question costs an attempt, not money.
+    expect(ask.concessionPaise).toBe(0);
+  });
+
+  it("does not promise a send it cannot make once the cap is spent", () => {
+    const ask = buildAsk(
+      subject({ attemptsUsed: 4, attemptCap: 4 }),
+      "escalated_to_human",
+      V4,
+    );
+
+    expect(ask.chips.map((chip) => chip.label)).toContain("cap spent · raise it in Policies");
+    expect(ask.ifApproved).toContain("Policies");
+    expect(ask.ifApproved).not.toContain("sends this at attempt");
+    expect(ask.draft.note).toContain("cap is spent");
+  });
+
+  it("quotes the pack's own quiet window and cool-down", () => {
+    const shifted = structuredClone(V4);
+    shifted.quiet.startMinutes = 20 * 60 + 30;
+    shifted.quiet.endMinutes = 10 * 60;
+    shifted.contact.coolDownHours = 6;
+
+    const labels = buildAsk(subject(), "escalated_to_human", shifted).chips.map(
+      (chip) => chip.label,
+    );
+
+    expect(labels).toContain("inside 10:00–20:30");
+    expect(labels).toContain("6h cool-down");
+  });
+
+  it("falls back to email when the escalation has no sentence of its own", () => {
+    const ask = buildAsk(subject({ channel: "EMAIL", handoverReason: null }), "escalated_to_human", V4);
+
+    expect(ask.draft.channel).toBe("EMAIL");
+    expect(ask.draft.subject).toBeTruthy();
+    expect(ask.justification[0]).toContain("held by a person");
   });
 });

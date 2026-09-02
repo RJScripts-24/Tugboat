@@ -39,6 +39,10 @@ const APPROVAL_RATE: Record<ApprovalGate, number> = {
   confidence_below_threshold: 0.61,
   discount_requires_approval: 0.66,
   hardship_language: 0.79,
+  // A case the agent could not finish on its own: a broken promise, a channel
+  // that would not deliver. Roughly half get another go, which is the honest
+  // shape of the question — it costs an attempt rather than money (D-151).
+  escalated_to_human: 0.52,
 };
 
 /**

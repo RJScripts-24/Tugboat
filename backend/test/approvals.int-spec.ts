@@ -9,6 +9,7 @@ import { AgentWorker } from "../src/agent-core/agent-worker";
 import { ExecutorService } from "../src/agent-core/executor.service";
 import { AppModule } from "../src/app.module";
 import { ClockService } from "../src/common/clock.service";
+import { CaseOverridesService } from "../src/cases/case-overrides.service";
 import { CasesService } from "../src/cases/cases.service";
 import { ApprovalsService } from "../src/approvals/approvals.service";
 import { OPT_OUT_LINE } from "../src/channels/message-copy";
@@ -38,6 +39,7 @@ describe("Approvals (integration)", () => {
   let approvals: ApprovalsService;
   let executor: ExecutorService;
   let cases: CasesService;
+  let overrides: CaseOverridesService;
   let queue: InlineActionQueue;
   let inbound: InboundService;
   let clock: ClockService;
@@ -152,6 +154,7 @@ describe("Approvals (integration)", () => {
     approvals = app.get(ApprovalsService);
     executor = app.get(ExecutorService);
     cases = app.get(CasesService);
+    overrides = app.get(CaseOverridesService);
     inbound = app.get(InboundService);
     queue = app.get(ACTION_QUEUE);
     clock = app.get(ClockService);
@@ -244,7 +247,7 @@ describe("Approvals (integration)", () => {
       expect(record.stage).toBe("escalated");
     });
 
-    itd("does not raise a card for an escalation no merchant can answer", async () => {
+    itd("raises the handover card for an escalation no gate covers", async () => {
       const caseId = await openCase();
       const promise = await prisma.paymentPromise.create({
         data: {
@@ -254,12 +257,16 @@ describe("Approvals (integration)", () => {
         },
       });
 
-      // A broken promise is operational: the case goes to a person on the
-      // pipeline, but there is no gate question to put on a card (D-69).
+      // A broken promise trips no gate, and D-69 therefore raised nothing at
+      // all — which left the case in `escalated` with no way for anybody to
+      // say what should happen to it. It gets the handover card instead: the
+      // question a broken promise really does have an answer to (D-151).
       const outcome = await executor.checkPromise(promise.id);
       expect(outcome.kind).toBe("escalated");
 
-      expect(await prisma.approval.count({ where: { caseId } })).toBe(0);
+      const approval = await prisma.approval.findFirstOrThrow({ where: { caseId } });
+      expect(approval.gate).toBe("escalated_to_human");
+      expect((approval.justification as string[])[0]).toContain("did not arrive");
       expect((await timeline(caseId)).at(-1)).toBe("ESCALATED");
     });
   });
@@ -417,6 +424,172 @@ describe("Approvals (integration)", () => {
   });
 
   /* ---------------------------------------------------------------- */
+
+  describe("a case a human takes is a question, not a dead end (D-151)", () => {
+    itd("raises a handover card the moment the merchant takes the case", async () => {
+      const caseId = await openCase();
+      await overrides.apply(merchantId, caseId, "escalate", merchantName, null);
+      await queue.drain();
+
+      const record = await prisma.case.findUniqueOrThrow({ where: { id: caseId } });
+      expect(record.stage).toBe("escalated");
+      // Taking a case is a hold: the gate refuses everything while it is set.
+      expect(record.pausedAt).not.toBeNull();
+
+      const approval = await prisma.approval.findFirstOrThrow({ where: { caseId } });
+      expect(approval.gate).toBe("escalated_to_human");
+      expect(approval.decision).toBeNull();
+      expect(approval.headline).toContain("Carry on");
+
+      // And it is genuinely in the queue a merchant reads, which is the whole
+      // complaint this decision came from.
+      const pending = await approvals.pending(merchantId);
+      expect(pending.map((row) => row.caseId)).toContain(`C-${caseId}`);
+    });
+
+    itd("lifts the hold on a yes and puts the case back on its ladder", async () => {
+      const caseId = await openCase();
+      await overrides.apply(merchantId, caseId, "escalate", merchantName, null);
+      await queue.drain();
+
+      const { id } = await prisma.approval.findFirstOrThrow({ where: { caseId } });
+      await approvals.approve(merchantId, id, { by: merchantName });
+
+      // The hold has to be gone *before* the release runs, or the gate the
+      // merchant just cleared would refuse their own approval.
+      const held = await prisma.case.findUniqueOrThrow({ where: { id: caseId } });
+      expect(held.pausedAt).toBeNull();
+
+      await queue.drain();
+
+      const record = await prisma.case.findUniqueOrThrow({ where: { id: caseId } });
+      expect(record.stage).toBe("waiting");
+      expect(record.attemptsUsed).toBe(1);
+      expect(await prisma.action.count({ where: { caseId, status: "EXECUTED" } })).toBe(1);
+    });
+
+    itd("halts the case on a no, with the reason on the record", async () => {
+      const caseId = await openCase();
+      await overrides.apply(merchantId, caseId, "escalate", merchantName, null);
+      await queue.drain();
+
+      const { id } = await prisma.approval.findFirstOrThrow({ where: { caseId } });
+      await approvals.reject(merchantId, id, {
+        by: merchantName,
+        reason: "I am handling this customer myself",
+      });
+      await queue.drain();
+
+      const record = await prisma.case.findUniqueOrThrow({ where: { id: caseId } });
+      expect(record.stage).toBe("halted");
+      expect(await prisma.action.count({ where: { caseId, status: "EXECUTED" } })).toBe(0);
+    });
+
+    itd("asks the same question when the agent escalates with no gate of its own", async () => {
+      const caseId = await openCase();
+      await cases.transition(caseId, "escalated", {
+        kind: "ESCALATED",
+        title: "Escalated to a human",
+        summary: "Promised 1,200 rupees by Friday and the payment did not arrive",
+        body: { type: "facts", rows: [{ label: "Gate", value: "none", mono: true }] },
+      });
+
+      await executor.raiseHandover(
+        caseId,
+        "Promised 1,200 rupees by Friday and the payment did not arrive",
+      );
+
+      const approval = await prisma.approval.findFirstOrThrow({ where: { caseId } });
+      expect(approval.gate).toBe("escalated_to_human");
+      // The card carries the escalation's own sentence, not a generic one.
+      expect((approval.justification as string[])[0]).toContain("did not arrive");
+    });
+
+    itd("brings a case the agent had spent back to life, from attempt zero", async () => {
+      // The state a merchant actually complains about: four attempts gone, the
+      // agent finished, the money still outstanding.
+      const caseId = await openCase({ attemptsUsed: 4, stage: "exhausted" });
+      await overrides.apply(merchantId, caseId, "escalate", merchantName, null);
+      await queue.drain();
+
+      const { id } = await prisma.approval.findFirstOrThrow({ where: { caseId } });
+      const { restarted } = await approvals.approve(merchantId, id, {
+        by: merchantName,
+        restart: true,
+      });
+      expect(restarted).toBe(true);
+
+      const reset = await prisma.case.findUniqueOrThrow({ where: { id: caseId } });
+      expect(reset.attemptsUsed).toBe(0);
+      expect(reset.restartedAt).not.toBeNull();
+      expect(reset.pausedAt).toBeNull();
+
+      // And the cap no longer refuses it: the release actually sends.
+      await queue.drain();
+      const record = await prisma.case.findUniqueOrThrow({ where: { id: caseId } });
+      expect(record.stage).toBe("waiting");
+      expect(record.attemptsUsed).toBe(1);
+      expect(await prisma.action.count({ where: { caseId, status: "EXECUTED" } })).toBe(1);
+    });
+
+    itd("says on the timeline that the caps were reset, and by whom", async () => {
+      const caseId = await openCase({ attemptsUsed: 4, stage: "exhausted" });
+      await overrides.apply(merchantId, caseId, "escalate", merchantName, null);
+      await queue.drain();
+
+      const { id } = await prisma.approval.findFirstOrThrow({ where: { caseId } });
+      await approvals.approve(merchantId, id, { by: merchantName, restart: true });
+
+      const decided = await prisma.caseEvent.findFirstOrThrow({
+        where: { caseId, kind: "APPROVAL_DECIDED" },
+      });
+      const rows = (decided.body as { rows: { label: string; value: string }[] }).rows;
+      const restart = rows.find((row) => row.label === "Case restarted");
+
+      expect(restart?.value).toContain("Attempts back to 0");
+      expect(restart?.value).toContain("opt-out");
+      expect(rows.find((row) => row.label === "Decided by")?.value).toBe(merchantName);
+    });
+
+    itd("will not restart a case on any card but a handover", async () => {
+      const { approvalId } = await escalatedCase("hardship_language");
+
+      await expect(
+        approvals.approve(merchantId, approvalId, { by: merchantName, restart: true }),
+      ).rejects.toThrow(/cannot restart a case/);
+    });
+
+    itd("cannot restart its way past an opt-out", async () => {
+      const caseId = await openCase({ attemptsUsed: 4, stage: "exhausted" });
+      await overrides.apply(merchantId, caseId, "escalate", merchantName, null);
+      await queue.drain();
+
+      const record = await prisma.case.findUniqueOrThrow({ where: { id: caseId } });
+      await prisma.customer.update({
+        where: { id: record.customerId },
+        data: { optedOutAt: new Date() },
+      });
+
+      const { id } = await prisma.approval.findFirstOrThrow({ where: { caseId } });
+      await approvals.approve(merchantId, id, { by: merchantName, restart: true });
+      await queue.drain();
+
+      // The counters reset; the customer's STOP did not.
+      const after = await prisma.case.findUniqueOrThrow({ where: { id: caseId } });
+      expect(after.stage).toBe("halted");
+      expect(await prisma.action.count({ where: { caseId, status: "EXECUTED" } })).toBe(0);
+    });
+
+    itd("raises one card however many times the button is pressed", async () => {
+      const caseId = await openCase();
+      await overrides.apply(merchantId, caseId, "escalate", merchantName, null);
+      await queue.drain();
+      await overrides.apply(merchantId, caseId, "escalate", merchantName, null);
+      await queue.drain();
+
+      expect(await prisma.approval.count({ where: { caseId } })).toBe(1);
+    });
+  });
 
   describe("an approval does not override the bounds that protect a person", () => {
     itd("halts instead of sending when the customer opted out after approving", async () => {

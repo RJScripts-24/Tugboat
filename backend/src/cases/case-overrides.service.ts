@@ -186,6 +186,25 @@ export class CaseOverridesService {
       await this.cases.moveStage(caseId, target, `${DETAIL[kind].toLowerCase()} by ${by}`);
     }
 
+    // Taking a case is only half an act: the agent stops, and then somebody has
+    // to say whether it starts again. Until D-151 nobody was ever asked — the
+    // case sat in `escalated` and the queue a merchant reads stayed empty — so
+    // the handover now raises its own card. Over the queue rather than by
+    // calling `ApprovalsService`, because `cases` may not depend on `approvals`
+    // without a `forwardRef`, and the one-way arrow is what keeps "nothing
+    // reaches a customer except through the Executor" true.
+    if (kind === "escalate") {
+      await this.queue.enqueue(
+        {
+          kind: "case.handover",
+          caseId,
+          jobId: `case:${caseId}:handover:${record.attemptsUsed}`,
+          reason: `Taken from the Control Tower by ${by}${note ? ` · ${note}` : ""}`,
+        },
+        { delayMs: 0 },
+      );
+    }
+
     const after = await this.prisma.case.findUniqueOrThrow({ where: { id: caseId } });
 
     this.domain.publish({

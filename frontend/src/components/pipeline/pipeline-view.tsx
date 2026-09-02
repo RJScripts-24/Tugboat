@@ -243,7 +243,11 @@ function nextActionAfterMove(stage: Stage, row: PipelineCase): string {
         ? `Re-present ${Math.min(row.attemptCap, row.attempts + 1)}/${row.attemptCap}`
         : `WhatsApp nudge · ${Math.min(row.attemptCap, row.attempts + 1)}/${row.attemptCap}`;
     case "waiting":
-      return "Cool-down · 20h left";
+      // Was "Cool-down · 20h left" — a hardcoded bound and an invented
+      // countdown: wrong the moment the pack changes, and wrong anyway for a
+      // case nineteen hours into its wait (B-81). The row carries no next-run
+      // time, so it says what it knows.
+      return "Waiting · in cool-down";
     default:
       return "—";
   }

@@ -28,6 +28,7 @@ import { PolicyService } from "../policy/policy.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ACTION_QUEUE, type ActionQueue } from "../queue/action-queue.interface";
 import { adapterFor } from "./adapter-selection";
+import { nextWrittenRung } from "./playbooks";
 import { NoPlanAvailableError, PlannerService, type PlanProposal } from "./planner.service";
 import { unreachableChannels } from "./reachability";
 
@@ -52,6 +53,22 @@ const RETRY_GAP_MS = 30 * 60_000;
 
 /** How far ahead a voice call may book a promise. */
 const PROMISE_HORIZON_MS = 3 * 24 * 60 * 60_000;
+
+/**
+ * The soonest a promise check-in may run.
+ *
+ * A promise for tonight is still a promise for a day that has not finished, so
+ * the check must land after it, not at the moment it was made (B-76).
+ */
+const MIN_PROMISE_FOLLOW_UP_MS = 12 * 60 * 60_000;
+
+/** Twilio message states that mean nobody received it. */
+const FAILED_DELIVERY = ["failed", "undelivered"];
+
+const TITLE_FOR_CHANNEL: Record<string, string> = {
+  WHATSAPP: "WhatsApp nudge",
+  EMAIL: "Email",
+};
 /** A second call to the same phone waits this long behind one in progress (B-71). */
 const CALL_SPACING_MS = 90_000;
 /** A call older than this with no status callback is not in progress; the line dropped and Twilio never said. */
@@ -484,7 +501,7 @@ export class ExecutorService {
         voiceEvent(customer, result, detail),
         spend,
       );
-      await this.recordPromise(record, promiseDate);
+      await this.recordPromise(record, promiseDate, result.mode === "real" ? "real" : "simulated");
       return {
         kind: "sent",
         channel: plan.channel,
@@ -585,7 +602,16 @@ export class ExecutorService {
       if (intent === "PROMISED_TO_PAY") {
         await this.cases.transition(record.id, "promised", event, spend);
         await this.queue.cancel(stepJob);
-        await this.recordPromise(record, new Date(this.clock.nowMs() + PROMISE_HORIZON_MS));
+        // The day the customer named on the call, not the one Boa offered.
+        // This used to be the horizon constant unconditionally, so "aaj raat
+        // ko" was filed as three days out and the card showed a date nobody
+        // had agreed to (B-76).
+        await this.recordPromise(
+          record,
+          call.promisedFor ?? new Date(this.clock.nowMs() + PROMISE_HORIZON_MS),
+          "real",
+        );
+        await this.sendPromisedLink(record);
         this.logger.log(`${toCaseRef(record.id)} promised on the call ${callId}`);
         return;
       }
@@ -630,7 +656,11 @@ export class ExecutorService {
     return open !== null;
   }
 
-  private async recordPromise(record: Case, promiseDate: Date): Promise<void> {
+  private async recordPromise(
+    record: Case,
+    promiseDate: Date,
+    telephony: "real" | "simulated" = "simulated",
+  ): Promise<void> {
     const promise = await this.prisma.paymentPromise.create({
       data: {
         caseId: record.id,
@@ -661,7 +691,10 @@ export class ExecutorService {
         rows: [
           { label: "Amount", value: `${inr(record.amountPaise)} rupees`, mono: true },
           { label: "Promised for", value: dayLabel(promiseDate), mono: true },
-          { label: "Heard on", value: "Voice call · simulated telephony" },
+          {
+            label: "Heard on",
+            value: telephony === "real" ? "Voice call · real call" : "Voice call · simulated telephony",
+          },
           {
             label: "Follow-up",
             value: "Scheduled — a broken promise escalates rather than re-nudges",
@@ -678,8 +711,135 @@ export class ExecutorService {
         reason: `Promised ${inr(record.amountPaise)} rupees for ${dayLabel(promiseDate)}`,
         promiseId: promise.id,
       },
-      { delayMs: Math.max(0, promiseDate.getTime() - this.clock.nowMs()) },
+      // Never zero: a customer who says "aaj raat ko" is promising today, and
+      // a follow-up computed as "the promised moment" would fire while they are
+      // still on the phone. Give the day they named time to actually happen.
+      { delayMs: Math.max(MIN_PROMISE_FOLLOW_UP_MS, promiseDate.getTime() - this.clock.nowMs()) },
     );
+  }
+
+  /**
+   * Send the payment link Boa said she would send (D-153).
+   *
+   * On the call she says the link is going to their WhatsApp. Before this she
+   * said it and nothing sent one — the agent made a commitment the system did
+   * not keep, on a recorded line (B-76). This queues the send the moment the
+   * promise is recorded.
+   *
+   * It is an ordinary gated rung, not a side channel: quiet hours, the opt-out
+   * and every cap still answer first, and the timeline shows the verdict. A
+   * customer with no phone simply gets nothing here, which is why the spoken
+   * line now says she is sending it rather than that it has arrived.
+   */
+  private async sendPromisedLink(record: Case & { customer: Customer }): Promise<void> {
+    if (!record.customer.phone) return;
+
+    await this.queue.enqueue(
+      {
+        kind: "case.step",
+        caseId: record.id,
+        jobId: `case:${record.id}:promise-link:${record.attemptsUsed}`,
+        reason: "Payment link promised on the call",
+        expectAttempt: record.attemptsUsed,
+        channel: "WHATSAPP",
+      },
+      { delayMs: 0 },
+    );
+  }
+
+/**
+   * Twilio has decided what really happened to a message (D-154).
+   *
+   * The send path records the provider's synchronous answer, which for WhatsApp
+   * is "queued" — an acknowledgement that Twilio took the request, not that
+   * anybody received anything. Minutes later it may become `delivered`, or
+   * `failed` because the sandbox session lapsed. Nothing used to ask, so a case
+   * could show a delivered nudge that never arrived and count it against the
+   * attempt cap (B-76).
+   *
+   * Idempotent by construction: only an `EXECUTED` action is claimed, so a
+   * redelivered callback finds nothing left to change.
+   */
+  async reconcileDelivery(
+    channelRef: string,
+    providerStatus: string,
+    errorCode: string | null,
+  ): Promise<void> {
+    if (!FAILED_DELIVERY.includes(providerStatus)) return;
+
+    const action = await this.prisma.action.findFirst({
+      where: { channelRef, status: "EXECUTED" },
+      include: { case: true },
+    });
+    if (!action) return;
+
+    const record = action.case;
+    const reason = errorCode ? `${providerStatus} · Twilio ${errorCode}` : providerStatus;
+
+    // An attempt is a contact that reached somebody. This one did not, so the
+    // case gets it back — but only the first time a channel fails on it. Two
+    // refunds for one dead channel is a loop, and the ladder has to be allowed
+    // to give up on a number that does not work.
+    const alreadyRefunded = await this.prisma.action.count({
+      where: { caseId: record.id, channel: action.channel, status: "FAILED" },
+    });
+    const refund = alreadyRefunded === 0 && record.attemptsUsed > 0;
+
+    await this.prisma.action.update({
+      where: { id: action.id },
+      data: {
+        status: "FAILED",
+        payload: {
+          ...(action.payload as Record<string, unknown> | null),
+          status: `${reason} · not delivered`,
+        } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    if (refund) {
+      await this.prisma.case.update({
+        where: { id: record.id },
+        data: { attemptsUsed: { decrement: 1 } },
+      });
+      // The follow-up queued at send time carries the attempt count it was
+      // scheduled against (D-56); refunding moves the case past it, so that job
+      // would be refused as stale and the case would simply stop. Replace it.
+      await this.queue.cancel(`case:${record.id}:step:${record.attemptsUsed}`);
+      await this.queue.enqueue(
+        {
+          kind: "case.step",
+          caseId: record.id,
+          jobId: `case:${record.id}:step:${record.attemptsUsed - 1}:redelivery`,
+          expectAttempt: record.attemptsUsed - 1,
+          reason: `${action.channel} was not delivered — ${reason}`,
+        },
+        { delayMs: 0 },
+      );
+    }
+
+    await this.cases.appendEvent(record.id, {
+      kind: "DELIVERY_FAILED",
+      title: `${(action.channel ? TITLE_FOR_CHANNEL[action.channel] : null) ?? "Message"} was not delivered`,
+      summary: refund
+        ? `${reason} · the attempt was given back`
+        : `${reason} · the attempt stands, this channel has failed before`,
+      badge: { label: "not delivered", tone: "halted" },
+      body: {
+        type: "facts",
+        rows: [
+          { label: "Provider verdict", value: reason, mono: true },
+          { label: "Message id", value: channelRef, mono: true },
+          {
+            label: "Attempt",
+            value: refund
+              ? "Returned to the case — nobody was contacted"
+              : "Counted — the channel has already been given a second chance",
+          },
+        ],
+      } as unknown as Prisma.InputJsonValue,
+    });
+
+    this.logger.warn(`${toCaseRef(record.id)} ${action.channel} ${channelRef}: ${reason}`);
   }
 
   /** The promised date has arrived. Kept closes it; broken sends it to a person. */
@@ -965,10 +1125,58 @@ export class ExecutorService {
    * A gate name means the PolicyGate refused on one of the four escalation
    * gates, and the approvals queue gets a card carrying the exact message that
    * was stopped. Without one, the escalation is operational — an adapter that
-   * threw, a promise that passed its date — and there is no question a merchant
-   * can answer on a card, so the case surfaces on the pipeline with its reason
-   * on the timeline and no request is raised (D-69).
+   * threw, a promise that passed its date — and D-69 left those cases with no
+   * card at all, on the reasoning that there was no question to ask.
+   *
+   * There was: *carry on, or stand down*. A case escalated with no gate sat in
+   * `escalated` forever, the agent stopped and nobody asked to restart it, and
+   * the queue a merchant reads stayed empty while their money waited. So every
+   * escalation raises a request now, and the gateless ones raise the handover
+   * ask (D-151, amending D-69).
    */
+  /**
+   * The card for a case that is simply *with a person* (D-151).
+   *
+   * Raised by the escalations no gate covers and by the Control Tower's own
+   * "Escalate to me", which reaches this over the queue rather than by calling
+   * approvals directly — `cases` may not depend on `approvals` without a
+   * `forwardRef`, and the arrow that keeps "nothing reaches a customer except
+   * through the Executor" true is worth more than a saved hop.
+   *
+   * The draft it carries is the next *written* rung the ladder would play,
+   * skipping the channel that just failed where one did: asking somebody to
+   * re-authorise the email that bounced a second ago is asking them to approve
+   * a known failure.
+   */
+  async raiseHandover(
+    caseId: number,
+    reason: string,
+    failed?: PolicyChannel,
+  ): Promise<StepOutcome> {
+    const record = await this.prisma.case.findUnique({
+      where: { id: caseId },
+      include: { customer: true },
+    });
+
+    if (!record) return { kind: "skipped", reason: `Case ${caseId} no longer exists` };
+    if (record.stage !== "escalated") {
+      return { kind: "skipped", reason: `Case is ${record.stage}, not escalated` };
+    }
+
+    await this.approvals.raise({
+      caseId,
+      gate: "escalated_to_human",
+      channel: nextWrittenRung(record.type, record.rootCause, record.attemptsUsed, {
+        phone: Boolean(record.customer.phone),
+        email: Boolean(record.customer.email),
+        avoid: failed,
+      }),
+      reason,
+    });
+
+    return { kind: "escalated", reason };
+  }
+
   private async escalate(
     record: Case,
     reason: string,
@@ -1000,6 +1208,8 @@ export class ExecutorService {
         concessionPaise: concession.concessionPaise || undefined,
         discountPercent: concession.discountPercent || undefined,
       });
+    } else {
+      await this.raiseHandover(record.id, reason, channel);
     }
 
     // The objection has now been put to a human. Clearing the flag is what

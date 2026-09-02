@@ -49,6 +49,7 @@ export type EventKind =
   | "POLICY_CHECK"
   | "EMAIL_SENT"
   | "WHATSAPP_SENT"
+  | "DELIVERY_FAILED"
   | "VOICE_CALL"
   | "RETRY_EXECUTED"
   | "CUSTOMER_REPLY"
@@ -115,6 +116,8 @@ export type AuditEntry = {
   seq: number;
   hash: string;
   prevHash: string;
+  /** The digest preimage, so this panel can recompute rather than assert (D-158). */
+  seed: string;
   actor: "BOA" | "POLICY" | "SYSTEM" | "HUMAN";
   action: string;
   minutesAgo: number;

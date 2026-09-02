@@ -1,4 +1,5 @@
 import type { PolicyCheck } from "../policy/policy-gate.evaluate";
+import type { PolicyPack } from "../policy/policy-pack";
 import { countFirings, RULE_SOURCES, type ClosedCase, type DecisionRow } from "./stopping-rules";
 
 /**
@@ -151,5 +152,65 @@ describe("terminal rules are counted per case, exactly once", () => {
       .reduce((sum, row) => sum + row.fired, 0);
 
     expect(endings).toBeLessThanOrEqual(cases.filter((row) => row.closed).length);
+  });
+});
+
+describe("the table states the pack that was actually in force", () => {
+  const RUPEE = 100;
+  const PACK: PolicyPack = {
+    contact: {
+      maxAttempts: 4,
+      coolDownHours: 20,
+      channelCaps: { WHATSAPP: 2, EMAIL: 2, VOICE: 1, RETRY: 2 },
+    },
+    quiet: { startMinutes: 21 * 60, endMinutes: 9 * 60, exemptSilentRetries: true },
+    rules: { opt_out: true, sentiment: true, deadline: true, attempt_cap: true },
+    sentimentThreshold: 0.7,
+    escalation: {
+      discountCapPercent: 15,
+      valueThresholdPaise: 25_000 * RUPEE,
+      b2bAlways: true,
+      confidenceFloor: 0.6,
+      hardship: true,
+    },
+    mandate: { maxPerCycle: 3, spacingDays: 3, alignToPayday: true },
+    channels: { WHATSAPP: true, EMAIL: true, VOICE: true, RETRY: true },
+  };
+
+  const labelOf = (key: string, pack: PolicyPack): string =>
+    countFirings([], [], pack).find((row) => row.key === key)!.rule;
+
+  it("reads the cool-down off the pack rather than the shipped default", () => {
+    expect(labelOf("cool_down", PACK)).toBe("Cool-down · 20h between contacts");
+
+    const loosened: PolicyPack = { ...PACK, contact: { ...PACK.contact, coolDownHours: 6 } };
+    expect(labelOf("cool_down", loosened)).toBe("Cool-down · 6h between contacts");
+  });
+
+  it("follows every other editable bound too", () => {
+    const edited: PolicyPack = {
+      ...PACK,
+      contact: { ...PACK.contact, maxAttempts: 7, channelCaps: { ...PACK.contact.channelCaps, VOICE: 2 } },
+      quiet: { ...PACK.quiet, startMinutes: 22 * 60, endMinutes: 8 * 60 },
+      escalation: { ...PACK.escalation, confidenceFloor: 0.75 },
+      mandate: { ...PACK.mandate, maxPerCycle: 2 },
+    };
+
+    expect(labelOf("quiet_hours", edited)).toBe("Quiet hours · 22:00–08:00 IST");
+    expect(labelOf("channel_cap", edited)).toBe("Per-channel cap · max 2 voice calls");
+    expect(labelOf("confidence_floor", edited)).toBe("Confidence floor · 0.75");
+    expect(labelOf("attempt_cap", edited)).toBe("Attempt cap · 7 per case, 2 for mandates");
+    expect(labelOf("mandate_cap", edited)).toBe("Mandate re-presentation · 2 per cycle, spaced");
+  });
+
+  it("falls back to the authored wording when no pack is supplied", () => {
+    const authored = RULE_SOURCES.find((source) => source.key === "cool_down")!.rule;
+    expect(countFirings([], []).find((row) => row.key === "cool_down")!.rule).toBe(authored);
+  });
+
+  it("leaves the rules that carry no number alone", () => {
+    expect(labelOf("opt_out", PACK)).toBe(
+      "Opt-out keyword · STOP, UNSUBSCRIBE, Hindi equivalents",
+    );
   });
 });

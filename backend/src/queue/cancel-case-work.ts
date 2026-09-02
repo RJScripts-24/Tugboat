@@ -22,6 +22,11 @@ export async function cancelCaseWork(
 ): Promise<void> {
   for (let attempt = 0; attempt <= 8; attempt += 1) {
     await queue.cancel(`case:${caseId}:step:${attempt}`);
+    // The handover ask is keyed the same way (D-151). Raising it on a case
+    // that has since been closed would be harmless — `raiseHandover` refuses
+    // anything that is not still `escalated` — but "drops every job still
+    // waiting on a case" should not have an exception nobody wrote down.
+    await queue.cancel(`case:${caseId}:handover:${attempt}`);
   }
 
   const promises = await prisma.paymentPromise.findMany({

@@ -176,7 +176,7 @@ export class FakeLlmDriver implements LlmDriver {
       ? {
           identify: `Namaste, main Boa bol rahi hoon, ${merchant} ki taraf se. Kya main ${who} se baat kar rahi hoon?`,
           state_amount: `Aapka ${amount} ka payment abhi tak pending hai. Koi issue tha kya?`,
-          seek_promise: `Bilkul. Kya main ${date} tak expect kar sakti hoon? Payment link main WhatsApp par bhej deti hoon.`,
+          seek_promise: `Bilkul. Kya main ${date} tak expect kar sakti hoon? Payment link main abhi aapke WhatsApp par bhej rahi hoon.`,
           confirm: `Theek hai, maine ${date}, ${amount} note kar liya hai. Link bhej rahi hoon. Dhanyavaad.`,
           acknowledge:
             "Bilkul samajh sakti hoon, main koi pressure nahi daalungi. Jab aap ready ho, link aapke WhatsApp par hai. Dhanyavaad.",
@@ -184,7 +184,7 @@ export class FakeLlmDriver implements LlmDriver {
       : {
           identify: `Hello, this is Boa calling on behalf of ${merchant}. Am I speaking with ${who}?`,
           state_amount: `There's ${amount} still outstanding. Was there a problem with it?`,
-          seek_promise: `Understood. May I note it for ${date}? I'll send the payment link on WhatsApp.`,
+          seek_promise: `Understood. May I note it for ${date}? I'm sending the payment link to your WhatsApp now.`,
           confirm: `Noted — ${date}, ${amount}. Link on its way. Thank you.`,
           acknowledge:
             "That's completely fine — I won't push. The link stays live on your WhatsApp for whenever it suits. Thank you for your time.",

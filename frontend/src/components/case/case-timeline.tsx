@@ -56,6 +56,9 @@ const NODE: Record<EventKind, { Icon: ComponentType<SVGProps<SVGSVGElement>>; to
   POLICY_CHECK: { Icon: ShieldCheckSmallIcon, tone: "neutral" },
   EMAIL_SENT: { Icon: MailIcon, tone: "neutral" },
   WHATSAPP_SENT: { Icon: WhatsAppIcon, tone: "neutral" },
+  // Red, like every other block: a message the provider refused to deliver is
+  // a stop, not a step, and the timeline should read as one.
+  DELIVERY_FAILED: { Icon: HaltIcon, tone: "halted" },
   VOICE_CALL: { Icon: PhoneIcon, tone: "waiting" },
   RETRY_EXECUTED: { Icon: RetryIcon, tone: "neutral" },
   CUSTOMER_REPLY: { Icon: ReplyIcon, tone: "neutral" },

@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "EventKind" ADD VALUE 'DELIVERY_FAILED';

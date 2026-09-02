@@ -21,7 +21,14 @@ export type JobKind =
    * off. Queued rather than done inline, because the world may have changed
    * between the click and the send (D-67).
    */
-  | "approval.release";
+  | "approval.release"
+  /**
+   * A person took a case from the Control Tower; ask them, on a card, whether
+   * Boa carries on with it. Queued rather than called, because `cases` may not
+   * depend on `approvals` without a `forwardRef` and the one-way arrow is worth
+   * keeping (D-151).
+   */
+  | "case.handover";
 
 export type QueuedJob = {
   kind: JobKind;

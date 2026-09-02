@@ -23,12 +23,13 @@ import type { PolicyChannel, PolicyPack } from "../policy/policy-pack";
  * Shapes mirror `frontend/src/lib/approvals-data.ts` field for field (D-3).
  */
 
-/** The four gates of PRD §9.6. */
+/** The four gates of PRD §9.6, plus the one a person opens themselves (D-151). */
 export type ApprovalGateName =
   | "discount_requires_approval"
   | "b2b_high_value"
   | "confidence_below_threshold"
-  | "hardship_language";
+  | "hardship_language"
+  | "escalated_to_human";
 
 export type PolicyChip = { label: string; tone?: string };
 
@@ -82,6 +83,11 @@ export type AskSubject = {
   lastSentimentScore: number | null;
   /** The rung the planner wanted when the gate refused it. */
   channel: PolicyChannel;
+  /**
+   * Why the case is sitting with a person, in the words the escalation used.
+   * Only the handover gate has one — the other four *are* the reason.
+   */
+  handoverReason?: string | null;
 };
 
 /** The concession Boa asks for when it asks at all. Capped by policy at 15%. */
@@ -140,6 +146,8 @@ export function buildAsk(subject: AskSubject, gate: ApprovalGateName, pack: Poli
       return hardshipAsk(subject);
     case "b2b_high_value":
       return b2bAsk(subject, pack);
+    case "escalated_to_human":
+      return handoverAsk(subject, pack);
     default:
       return confidenceAsk(subject, pack);
   }
@@ -422,6 +430,99 @@ function b2bAsk(subject: AskSubject, pack: PolicyPack): Ask {
       { label: "Case resumed", detail: "Follow-up booked inside the playbook" },
     ],
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Sitting with a person → carry on, or stand down                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The one ask that is not about a rule Boa tripped.
+ *
+ * The other four gates are questions the agent asks before acting. This one is
+ * asked *after* the case stopped: somebody took it from the Control Tower, or
+ * the agent escalated for a reason no gate covers — a promise that came and
+ * went, a channel that would not deliver — and the case then sat in
+ * `escalated` with nothing to answer. The queue read empty while three cases
+ * waited on a person, which is the failure this gate exists to fix (D-151).
+ *
+ * So the question is the plain one: carry on, or stand down. A yes hands the
+ * case back to Boa and sends the message below; a no closes it for good. And
+ * when the attempt cap is already spent the card says so rather than promising
+ * a send the gate will refuse — raising the cap is a policy edit, which belongs
+ * in Policies where it is versioned (D-150).
+ */
+function handoverAsk(subject: AskSubject, pack: PolicyPack): Ask {
+  const noun = TYPE_NOUN[subject.type];
+  const link = payLink(subject.caseId);
+  const capSpent = subject.attemptsUsed >= subject.attemptCap;
+  const email = subject.channel === "EMAIL";
+  const mail = email ? emailCopy(copyContext(subject)) : null;
+  const quiet = `${clockLabel(pack.quiet.endMinutes)}–${clockLabel(pack.quiet.startMinutes)}`;
+
+  return {
+    headline: capSpent
+      ? `Decide ${money(subject.amountPaise)}: the agent is out of attempts and the ${noun} is still open`
+      : `Carry on chasing ${money(subject.amountPaise)}, or stand down`,
+    justification: [
+      subject.handoverReason
+        ? `${subject.handoverReason}. Boa has stopped on this case and sent nothing since.`
+        : `This case is being held by a person. Boa has stopped on it and will send nothing until somebody says otherwise.`,
+      capSpent
+        ? `${subject.attemptsUsed} of ${subject.attemptCap} attempts are spent, so a yes cannot send anything until the cap is raised in Policies. A no closes the case and leaves ${subject.customerName} alone.`
+        : `A yes hands the case back and spends attempt ${subject.attemptsUsed + 1} of ${subject.attemptCap} on the message below, with the ladder carrying on from there. A no closes the case: no email, no WhatsApp, no call.`,
+    ],
+    chips: [
+      { label: "held by a human", tone: "waiting" },
+      {
+        label: `${subject.attemptsUsed} of ${subject.attemptCap} attempts`,
+        ...(capSpent ? { tone: "halted" } : {}),
+      },
+      ...(capSpent ? [{ label: "cap spent · raise it in Policies", tone: "halted" }] : []),
+      { label: `${pack.contact.coolDownHours}h cool-down` },
+      { label: `inside ${quiet}` },
+    ],
+    concessionPaise: 0,
+    candidates: [],
+    draft: {
+      channel: email ? "EMAIL" : "WHATSAPP",
+      to: subject.contact,
+      ...(mail ? { subject: mail.subject } : {}),
+      lines: mail ? mail.lines : whatsappCopy(copyContext(subject)),
+      link,
+      note: capSpent
+        ? `Held back · the attempt cap is spent, so this sends only if the cap is raised first`
+        : `${email ? "Email" : "WhatsApp"} · payment link ${link} · the next rung of this case's playbook`,
+    },
+    ifApproved: capSpent
+      ? `Boa takes the case back, but the attempt cap still holds: nothing goes out until it is raised in Policies, and the case closes as exhausted if it is not.`
+      : `Boa takes the case back and sends this at attempt ${subject.attemptsUsed + 1} of ${subject.attemptCap}. The gate runs again first, so quiet hours, the cool-down and an opt-out can still hold it.`,
+    ifRejected: `Boa stands down for good: the case is halted, queued work is cancelled, and ${subject.customerName} is not contacted again.`,
+    resumeSteps: [
+      {
+        label: "Case handed back",
+        detail: "The hold is lifted and the pause on the ledger is appended over, not erased",
+      },
+      {
+        label: capSpent ? "Send held" : "Message sent",
+        detail: capSpent
+          ? "The attempt cap refuses it at the gate until Policies says otherwise"
+          : `${email ? "Email" : "WhatsApp"} · payment link ${link}`,
+      },
+      {
+        label: "Ladder resumed",
+        detail: capSpent
+          ? "Nothing further is scheduled while the cap holds"
+          : `Follow-up booked inside the playbook · ${pack.contact.coolDownHours}h cool-down starts now`,
+      },
+    ],
+  };
+}
+
+/** 540 → "09:00", the way a policy bound is written on a card. */
+function clockLabel(minutes: number): string {
+  const hour = Math.floor(minutes / 60) % 24;
+  return `${String(hour).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
 function round2(value: number): number {

@@ -122,6 +122,9 @@ export class AuditService {
       action: row.action,
       minutesAgo: Math.max(0, Math.round((now - row.at.getTime()) / 60_000)),
       detail: row.detail,
+      // The digest preimage. Without it the Case Detail cannot recompute
+      // anything, and its "verify" button was a timer pretending to (B-81).
+      seed: row.seed,
     }));
   }
 

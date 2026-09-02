@@ -14,7 +14,7 @@
  * the action it stopped is sitting in `NEEDS_APPROVAL`, and it is still there
  * after a reload.
  *
- * What stays is the vocabulary: the four gates, what each one means, and the
+ * What stays is the vocabulary: the gates, what each one means, and the
  * rejection reasons each one offers. The API serves the reasons on every
  * request too (D-70), so the dialog's options and the reasons the history table
  * can contain are one list; the copy below is the same list, kept here because
@@ -38,12 +38,18 @@ import {
  * The four gates from PRD 9.6, and the whole reason this page exists: an
  * action that trips one of them is planned, checked and then *stopped* - it
  * never executes and asks forgiveness afterwards.
+ *
+ * The fifth is not a rule the agent tripped. `escalated_to_human` is the card
+ * for a case sitting with a person — taken from the Case Detail page, or
+ * escalated by the agent for a reason no gate covers — and it asks the one
+ * question those cases do have an answer to: carry on, or stand down (D-151).
  */
 export type ApprovalGate =
   | "discount_requires_approval"
   | "b2b_high_value"
   | "confidence_below_threshold"
-  | "hardship_language";
+  | "hardship_language"
+  | "escalated_to_human";
 
 export const GATE_META: Record<
   ApprovalGate,
@@ -68,6 +74,11 @@ export const GATE_META: Record<
     label: "Hardship",
     rule: "Dispute or hardship language stops the agent immediately and hands the case over",
     tone: "halted",
+  },
+  escalated_to_human: {
+    label: "Handed over",
+    rule: "A case a person took, or one the agent could not finish, waits here until somebody says carry on or stand down",
+    tone: "waiting",
   },
 };
 
@@ -213,6 +224,12 @@ const REJECTION_REASONS: Record<ApprovalGate, string[]> = {
     "No payment plan on this account — close it instead",
     "Collections will take this one from here",
     "The terms are wrong · I will make the offer myself",
+  ],
+  escalated_to_human: [
+    "I am handling this customer myself",
+    "Not worth another attempt — close it",
+    "Already settled outside Tugboat",
+    "Wrong contact details · do not chase this one",
   ],
 };
 

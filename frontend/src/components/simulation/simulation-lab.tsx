@@ -250,9 +250,18 @@ export function SimulationLab({
             </button>
           ) : null}
 
+          {/*
+            From a report this opens the configuration rather than starting a
+            batch. It used to run one immediately on whatever config the page
+            happened to hold, which meant that once a report was pinned — the
+            state this page opens in — the batch size, the seed and the mix
+            could not be reached at all: the controls existed and nothing in
+            the UI could get to them (B-80). Two clicks to run a batch is the
+            right price for being able to say what batch you are running.
+          */}
           {phase === "running" ? null : (
             <button
-              onClick={run}
+              onClick={phase === "report" ? () => setPhase("configure") : run}
               disabled={busy}
               className="btn-gold gap-2.5 px-6 py-[11px] text-[14.5px]"
             >
@@ -261,7 +270,7 @@ export function SimulationLab({
               ) : (
                 <PlayIcon className="h-[12px] w-[12px]" />
               )}
-              {busy ? "Starting…" : phase === "report" ? "Run again" : "Run batch"}
+              {busy ? "Starting…" : phase === "report" ? "Configure a new batch" : "Run batch"}
             </button>
           )}
         </div>

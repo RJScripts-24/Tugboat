@@ -111,7 +111,7 @@ export class VoiceController {
       next = await this.dialogue.liveTurn(context, transcript);
     } catch (error) {
       this.logger.error(`Call ${callId}: the dialogue engine failed mid-call — closing: ${(error as Error).message}`);
-      next = { say: closingLine(context.hinglish), endCall: true, intent: "UNDECIDED" };
+      next = { say: closingLine(context.hinglish), endCall: true, intent: "UNDECIDED", promiseDate: null };
     }
     transcript.push({ speaker: "BOA", text: next.say });
     const index = boaTurnsSoFar + 1;
@@ -120,6 +120,8 @@ export class VoiceController {
     await this.calls.speak(callId, transcript, {
       status: ending ? "wrapping" : "talking",
       intent: next.intent,
+      // The day the customer actually named, if this turn heard one (D-151).
+      promisedFor: next.promiseDate ? istDay(next.promiseDate) : null,
     });
 
     if (ending) {
@@ -232,6 +234,17 @@ function twiml(inner: string): string {
 }
 
 /** The rendered clip when there is one; Twilio's own Indian voice otherwise. */
+/**
+ * A YYYY-MM-DD the model heard, as an instant.
+ *
+ * Anchored at 09:00 IST — the promise is a day, not a moment, and the follow-up
+ * that reads it back wants the morning of that day rather than midnight UTC,
+ * which is the previous evening in India.
+ */
+function istDay(day: string): Date {
+  return new Date(`${day}T09:00:00+05:30`);
+}
+
 function speak(url: string | null, text: string, hinglish: boolean): string {
   if (url) return `<Play>${escapeXml(url)}</Play>`;
   return `<Say voice="Polly.Aditi" language="${hinglish ? "hi-IN" : "en-IN"}">${escapeXml(text)}</Say>`;

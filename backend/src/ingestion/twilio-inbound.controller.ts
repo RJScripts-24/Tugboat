@@ -4,6 +4,7 @@ import type { Request } from "express";
 import { Public } from "../auth/public.decorator";
 import { toCaseRef } from "../common/case-ref";
 import { AppConfigService } from "../config/app-config.service";
+import { ExecutorService } from "../agent-core/executor.service";
 import { InboundService } from "../conversation/inbound.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { twilioSignatureValid } from "../voice/twilio-signature";
@@ -31,6 +32,7 @@ export class TwilioInboundController {
     private readonly config: AppConfigService,
     private readonly prisma: PrismaService,
     private readonly inbound: InboundService,
+    private readonly executor: ExecutorService,
   ) {}
 
   @Public()
@@ -68,6 +70,37 @@ export class TwilioInboundController {
 
     const outcome = await this.inbound.handle({ caseId: record.id, channel: "WHATSAPP", text });
     this.logger.log(`Inbound WhatsApp from ${mask(phone)} → ${toCaseRef(record.id)} · ${outcome.sentiment} · ${outcome.consequence}`);
+    return EMPTY;
+  }
+
+  /**
+   * Twilio's verdict on a message it accepted earlier (D-154).
+   *
+   * Registered by the WhatsApp adapter as `StatusCallback`. Twilio posts every
+   * transition; only the terminal failures change anything, and the executor
+   * decides what. Signature-verified first, exactly like the inbound route
+   * above — this endpoint can hand an attempt back to a case, so an unsigned
+   * caller must not reach it.
+   */
+  @Public()
+  @Post("message-status")
+  @HttpCode(200)
+  @Header("Content-Type", "text/xml")
+  async messageStatus(@Body() body: TwilioForm, @Req() request: Request): Promise<string> {
+    const twilio = this.config.twilio;
+    if (!twilio) throw new ForbiddenException({ error: "Twilio is not configured." });
+
+    const url = `${this.config.publicApiUrl}${request.originalUrl}`;
+    if (!twilioSignatureValid(twilio.authToken, url, body ?? {}, request.header("x-twilio-signature"))) {
+      this.logger.warn("Rejected an unsigned message-status webhook");
+      throw new ForbiddenException({ error: "Signature did not verify." });
+    }
+
+    const sid = (body.MessageSid ?? body.SmsSid ?? "").trim();
+    const status = (body.MessageStatus ?? body.SmsStatus ?? "").trim();
+    if (!sid || !status) return EMPTY;
+
+    await this.executor.reconcileDelivery(sid, status, body.ErrorCode ?? null);
     return EMPTY;
   }
 }

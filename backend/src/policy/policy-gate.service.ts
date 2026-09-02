@@ -94,17 +94,37 @@ export class PolicyGateService {
 
     const { id: policyVersionId, version, pack } = await this.policy.getActive(record.merchantId);
 
+    /*
+     * The sends that still count against this case's bounds.
+     *
+     * Normally all of them. When a human has put the case back to the start
+     * (D-157), only the ones since that instant: a restart is meant to reset
+     * the channel caps, the cool-down and the re-presentation count, and all
+     * three are derived from these rows rather than stored, so filtering here
+     * resets all three in one place. Nothing is deleted — the case's timeline
+     * still shows every message that went out, and the ledger still proves it.
+     *
+     * The bounds a restart does *not* touch are the ones that are not counted
+     * from actions at all: the opt-out, the hardship flag, the deadline. Those
+     * belong to the customer rather than to the agent's pacing.
+     */
+    const counted = record.restartedAt
+      ? record.actions.filter(
+          (entry) => entry.executedAt !== null && entry.executedAt >= record.restartedAt!,
+        )
+      : record.actions;
+
     const channelUsage = Object.fromEntries(
       POLICY_CHANNELS.map((channel) => [
         channel,
-        record.actions.filter((entry) => entry.channel === channel).length,
+        counted.filter((entry) => entry.channel === channel).length,
       ]),
     ) as Record<PolicyChannel, number>;
 
-    const contacts = record.actions.filter(
+    const contacts = counted.filter(
       (entry) => entry.channel !== null && entry.channel !== "RETRY",
     );
-    const representations = record.actions.filter((entry) => entry.channel === "RETRY");
+    const representations = counted.filter((entry) => entry.channel === "RETRY");
 
     const subject: GateSubject = {
       caseId: record.id,

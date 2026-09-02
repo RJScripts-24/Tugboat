@@ -122,7 +122,9 @@ export function verifyChains(rows: LedgerRow[], tamperedId?: string): ChainVerdi
  * the digest written beside it. The chain-level question is the function
  * above.
  */
-export function verifyRow(row: LedgerRow): { digest: string; matches: boolean } {
+export function verifyRow(
+  row: Pick<LedgerRow, "seed" | "prevHash" | "hash">,
+): { digest: string; matches: boolean } {
   const digest = ledgerDigest(`${row.seed}|${row.prevHash}`);
   return { digest, matches: digest === row.hash };
 }

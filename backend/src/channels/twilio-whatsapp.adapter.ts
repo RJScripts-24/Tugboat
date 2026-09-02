@@ -67,6 +67,10 @@ export class TwilioWhatsappAdapter implements ChannelAdapter {
       From: twilio.whatsappFrom,
       To: `whatsapp:${to}`,
       Body: lines.join("\n"),
+      // Twilio answers "queued" synchronously and decides later. Without this
+      // callback the case keeps the optimistic answer for ever and shows a
+      // delivered message that never arrived (B-76).
+      StatusCallback: `${this.config.publicApiUrl}/webhooks/twilio/message-status`,
     });
 
     const auth = Buffer.from(`${twilio.accountSid}:${twilio.authToken}`).toString("base64");

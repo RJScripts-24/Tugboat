@@ -187,3 +187,41 @@ export function narrate(
     }
   }
 }
+
+/**
+ * The next *written* rung — the message a merchant is asked to authorise.
+ *
+ * The handover ask (D-151) has to show the exact thing that goes out if the
+ * answer is "carry on", and only WhatsApp and email have a body to show: a
+ * retry is silent, and a call is a conversation rather than a draft. So the
+ * walk is the planner's own — this attempt's rung, then the rest of the
+ * ladder, then the ladder again — filtered to the two channels that can be
+ * read before they are sent, and to the ones this customer can actually
+ * receive. Approving sends this one message; the ladder carries on from there,
+ * calls included.
+ *
+ * `avoid` is the channel that just failed, where one did. Asking a merchant to
+ * re-authorise the email that bounced ten seconds ago is asking them to
+ * approve a known failure.
+ */
+export function nextWrittenRung(
+  type: CaseType,
+  rootCause: RootCause | null,
+  attemptsUsed: number,
+  reach: { phone: boolean; email: boolean; avoid?: PolicyChannel },
+): PolicyChannel {
+  const ladder = ladderFor(type, rootCause);
+  const start = Math.min(Math.max(0, attemptsUsed), ladder.length - 1);
+  const walk = [...ladder.slice(start), ...ladder];
+
+  const reachable = (channel: PolicyChannel): boolean =>
+    channel === "WHATSAPP" ? reach.phone : channel === "EMAIL" ? reach.email : false;
+
+  const written = walk.filter(reachable);
+
+  return (
+    written.find((channel) => channel !== reach.avoid) ??
+    written[0] ??
+    (reach.phone ? "WHATSAPP" : "EMAIL")
+  );
+}

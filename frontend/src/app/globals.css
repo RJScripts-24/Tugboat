@@ -781,13 +781,28 @@
   background: transparent;
 }
 
+/* A panel header is a title and, usually, something on the right — a meta
+   line, a filter, a "chain verified" badge. Those right-hand pieces are
+   `shrink-0` because a half-truncated assertion is worse than none, so when
+   the pair no longer fits they have to go somewhere: without `flex-wrap` they
+   went *outside the panel*, and one of them widened the whole page by 69px at
+   1280 (D-155). Wrapping puts the action on its own line instead. */
 .surface-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 4px 12px;
   min-height: 44px;
   padding: 10px 16px;
+}
+
+/* Wrapped, the action would otherwise fall to the left of its own line —
+   `space-between` has nothing to distribute when one item holds the row. The
+   auto margin keeps it right on both lines, and `:not(:only-child)` keeps a
+   header that is only a title from being pushed right by it. */
+.surface-head > :last-child:not(:only-child) {
+  margin-inline-start: auto;
 }
 
 .surface-title {
@@ -797,6 +812,8 @@
   text-transform: uppercase;
   color: var(--color-txt);
   font-size: 13px;
+  /* So a long title yields the line rather than the panel yielding its edge. */
+  min-width: 0;
 }
 
 .meta {

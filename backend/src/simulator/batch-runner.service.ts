@@ -417,6 +417,11 @@ export class BatchRunnerService {
         return;
       }
 
+      if (job.kind === "case.handover") {
+        await this.executor.raiseHandover(job.caseId, job.reason);
+        return;
+      }
+
       if (job.kind === "approval.release" && job.approvalId) {
         await this.executor.releaseApproved(job.approvalId);
         return;

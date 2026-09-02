@@ -1,4 +1,12 @@
-import { ArrayMaxSize, IsArray, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from "class-validator";
 
 /**
  * A yes, optionally carrying a rewritten body.
@@ -18,6 +26,17 @@ export class ApproveApprovalDto {
   draftLines?: string[];
 
   @IsOptional() @IsString() @MaxLength(200) draftSubject?: string;
+
+  /**
+   * Work the case again from the start (D-157).
+   *
+   * Accepted only on a handover request, where "carry on" is the question
+   * being asked. It sets the attempts back to zero and makes every bound the
+   * gate derives from past sends — the channel caps, the cool-down, the
+   * re-presentation count — count from this moment. It cannot clear an
+   * opt-out or a hardship flag; those are the customer's, not the merchant's.
+   */
+  @IsOptional() @IsBoolean() restart?: boolean;
 }
 
 /**

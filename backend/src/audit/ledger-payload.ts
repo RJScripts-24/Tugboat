@@ -27,6 +27,7 @@ export const AUDIT_MAP: Record<EventKind, { actor: LedgerActor; action: string }
   POLICY_CHECK: { actor: "POLICY", action: "POLICY_EVALUATED" },
   EMAIL_SENT: { actor: "BOA", action: "ACTION_EXECUTED" },
   WHATSAPP_SENT: { actor: "BOA", action: "ACTION_EXECUTED" },
+  DELIVERY_FAILED: { actor: "SYSTEM", action: "DELIVERY_FAILED" },
   VOICE_CALL: { actor: "BOA", action: "ACTION_EXECUTED" },
   RETRY_EXECUTED: { actor: "BOA", action: "ACTION_EXECUTED" },
   CUSTOMER_REPLY: { actor: "SYSTEM", action: "INBOUND_RECORDED" },
