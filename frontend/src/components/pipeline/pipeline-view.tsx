@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ChalkRule } from "@/components/dashboard/chalk";
 import { ChevronRightIcon, DownloadIcon } from "@/components/dashboard/icons";
 import { MoneyValue } from "@/components/dashboard/primitives";
+import { casesProvenance, type ShellStatus } from "@/lib/dashboard-data";
 import { formatPercent } from "@/lib/money";
 import {
   CASE_TYPE_ORDER,
@@ -44,12 +45,12 @@ import { PipelineTable } from "./pipeline-table";
  */
 export function PipelineView({
   cases,
-  seed,
+  status,
   policyVersion,
 }: {
   cases: PipelineCase[];
-  /** The promoted run's seed, or 0 when this data did not come from a run. */
-  seed: number;
+  /** The seed, and how the narrated population splits between batch and live. */
+  status: Pick<ShellStatus, "seed" | "batchCases" | "liveCases">;
   /** The pack actually in force, read from `GET /policies` by the page. */
   policyVersion: string;
 }) {
@@ -113,8 +114,8 @@ export function PipelineView({
             promoted, and "policy v4" while the top bar three inches above read
             the pack actually in force. One fact, two numbers, one screen. */}
         <p className="mono text-[12px] text-txt-faint">
-          {seed > 0 ? `seed ${seed} · ` : ""}
-          {cases.length} cases · contacts masked · every outbound action gated by {policyVersion}
+          {casesProvenance(status)} · contacts masked · every outbound action gated by{" "}
+          {policyVersion}
         </p>
         <ExportButton rows={rows} />
       </div>

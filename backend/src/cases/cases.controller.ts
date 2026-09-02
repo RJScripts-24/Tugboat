@@ -14,6 +14,8 @@ import type { SessionClaims } from "../auth/auth.constants";
 import { CurrentMerchant } from "../auth/current-merchant.decorator";
 import { parseCaseRef, toCaseRef } from "../common/case-ref";
 import { ClockService } from "../common/clock.service";
+import { WAIVABLE_CHECKS } from "../policy/policy-gate.evaluate";
+import { PolicyGateService } from "../policy/policy-gate.service";
 import { PolicyService } from "../policy/policy.service";
 import { CaseOverridesService } from "./case-overrides.service";
 import { CasesService } from "./cases.service";
@@ -35,6 +37,7 @@ export class CasesController {
     private readonly cases: CasesService,
     private readonly overrides: CaseOverridesService,
     private readonly policy: PolicyService,
+    private readonly gate: PolicyGateService,
     private readonly audit: AuditService,
     private readonly clock: ClockService,
   ) {}
@@ -176,14 +179,68 @@ export class CasesController {
     );
   }
 
+  /**
+   * GET /cases/:id/call-preview — what would stop a call, before one is asked for.
+   *
+   * The dialog behind "Ask Boa to call now" reads this and nothing else. It is
+   * a dry run of the same `evaluateGate` the Executor will run, so the rules it
+   * lists are the rules that will answer — rather than a second, hand-kept copy
+   * of the policy that drifts the first time somebody edits the pack (B-79).
+   */
+  @Get(":id/call-preview")
+  async callPreview(@CurrentMerchant() merchant: SessionClaims, @Param("id") id: string) {
+    const caseId = this.parse(id);
+    // 404s on a case that is not this merchant's, before the gate is asked.
+    await this.cases.findOne(merchant.sub, caseId);
+
+    const evaluation = await this.gate.preview(caseId, { channel: "VOICE" });
+
+    const blocking = evaluation.checks.filter((check) => check.verdict === "block");
+
+    return {
+      allowed: evaluation.verdict === "allowed",
+      /** Every bound currently objecting, and whether a human may spend it. */
+      blocks: blocking.map((check) => ({
+        name: check.name,
+        note: check.note,
+        waivable: WAIVABLE_CHECKS.includes(check.name),
+      })),
+      /**
+       * True when something is objecting that no override lifts, so the dialog
+       * offers no way through. Forcing past a cool-down is the merchant's call;
+       * forcing past quiet hours or an opt-out is not on offer.
+       */
+      refused: blocking.some((check) => !WAIVABLE_CHECKS.includes(check.name)),
+    };
+  }
+
   @Post(":id/call")
   @HttpCode(200)
-  call(
+  async call(
     @CurrentMerchant() merchant: SessionClaims,
     @Param("id") id: string,
     @Body() body: OverrideCaseDto,
   ) {
-    return this.overrides.apply(merchant.sub, this.parse(id), "call", merchant.name, body.note ?? null);
+    const caseId = this.parse(id);
+
+    // The rules being stepped over are read here, before the case moves, so the
+    // ledger row names them. A row that says "forced" without saying past what
+    // is the same non-claim as a "Chain verified" badge that hashes nothing.
+    const waived = body.force
+      ? (await this.gate.preview(caseId, { channel: "VOICE" })).checks
+          .filter((check) => check.verdict === "block")
+          .map((check) => check.name)
+      : [];
+
+    return this.overrides.apply(
+      merchant.sub,
+      caseId,
+      "call",
+      merchant.name,
+      body.note ?? null,
+      body.force ?? false,
+      waived,
+    );
   }
 
   @Post(":id/resolve-external")

@@ -40,6 +40,7 @@ export function CaseLedger({
   detail,
   state,
   onOverride,
+  onRequestCall,
   paused,
   busy = false,
 }: {
@@ -53,6 +54,8 @@ export function CaseLedger({
   /** `cases.pausedAt` is set: the column the PolicyGate actually enforces. */
   paused: boolean;
   onOverride: (kind: OverrideKind) => void;
+  /** Asks the gate what would stop a call, then rings or opens the dialog. */
+  onRequestCall: () => void;
   /** An override is in flight — the buttons say so rather than firing twice. */
   busy?: boolean;
 }) {
@@ -68,6 +71,7 @@ export function CaseLedger({
       <Overrides
         state={state}
         onOverride={onOverride}
+        onRequestCall={onRequestCall}
         stage={detail.record.stage}
         paused={paused}
         attempts={detail.record.attempts}
@@ -504,6 +508,7 @@ function AuditRow({ row }: { row: AuditEntry }) {
 function Overrides({
   state,
   onOverride,
+  onRequestCall,
   stage,
   paused,
   attempts,
@@ -512,6 +517,7 @@ function Overrides({
 }: {
   state: CaseState;
   onOverride: (kind: OverrideKind) => void;
+  onRequestCall: () => void;
   stage: string;
   paused: boolean;
   attempts: number;
@@ -627,7 +633,9 @@ function Overrides({
 
         <button
           type="button"
-          onClick={() => onOverride("call")}
+          // Not `onOverride("call")` any more: the gate is asked first, and a
+          // cool-down is something the merchant can choose to spend (D-160).
+          onClick={onRequestCall}
           className="btn-op-quiet"
           disabled={waiting || closed || done || paused || spent}
           title={reason(

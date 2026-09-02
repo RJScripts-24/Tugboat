@@ -114,6 +114,14 @@ export type StepOptions = {
   expectAttempt?: number;
   /** A rung a human asked for (D-145). */
   channel?: PolicyChannel;
+  /**
+   * That human also overriding the bounds they may waive (D-160).
+   *
+   * The gate still runs, still records, and still refuses an opt-out. What
+   * changes is that the caps, the cool-down, the quiet window and the lane
+   * switches become `skip` rows naming the person instead of a refusal.
+   */
+  force?: { by: string };
 };
 
 @Injectable()
@@ -233,6 +241,9 @@ export class ExecutorService {
         channel: plan.channel,
         concessionPaise: plan.concessionPaise,
         discountPercent: plan.discountPercent,
+        ...(options.force
+          ? { override: { by: options.force.by, at: this.clock.now() } }
+          : {}),
       });
 
       if (verdict.outcome.kind === "allow") {

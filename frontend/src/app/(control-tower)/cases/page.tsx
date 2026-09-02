@@ -28,7 +28,11 @@ export default async function PipelinePage() {
     // useSearchParams needs a boundary to suspend at during prerender.
     <Suspense fallback={<PipelineSkeleton />}>
       <LiveRefresh />
-      <PipelineView cases={cases} seed={status.seed} policyVersion={status.policyVersion} />
+      <PipelineView
+        cases={cases}
+        status={status}
+        policyVersion={status.policyVersion}
+      />
     </Suspense>
   );
 }

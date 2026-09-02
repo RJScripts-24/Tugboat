@@ -694,3 +694,81 @@ describe("PolicyGate — an approved action, checked again", () => {
     expect(result.outcome).toMatchObject({ kind: "defer" });
   });
 });
+
+/**
+ * D-160 — a human standing on one case may spend its cool-down, and nothing
+ * else.
+ *
+ * The scope is the point of these tests. "Ask Boa to call now" is a merchant
+ * deciding the pacing rule protecting an unattended agent should not hold a
+ * call they are choosing to make; it is not a way past quiet hours, the caps,
+ * or a customer who said STOP. Each of those has its own test here so the day
+ * somebody widens `WAIVABLE_CHECKS` the suite says which line they crossed.
+ */
+describe("PolicyGate — a human override (D-160)", () => {
+  const forced = (at = MIDDAY): GateAction =>
+    action({ channel: "VOICE", at, override: { by: "Demo Merchant", at } });
+
+  const inCoolDown = () => subject({ lastContactAt: new Date(MIDDAY.getTime() - 5 * HOUR) });
+
+  it("waives a cool-down that would otherwise defer the call", () => {
+    const blocked = run(inCoolDown(), action({ channel: "VOICE" }));
+    expect(blocked.verdict).toBe("blocked");
+    expect(blocked.outcome).toMatchObject({ kind: "defer" });
+
+    const result = run(inCoolDown(), forced());
+    expect(result.verdict).toBe("allowed");
+    expect(result.outcome).toEqual({ kind: "allow" });
+  });
+
+  it("records the waived cool-down as a skip naming who waived it", () => {
+    const check = find(run(inCoolDown(), forced()).checks, "Cool-down");
+
+    expect(check.verdict).toBe("skip");
+    expect(check.note).toBe(
+      "5h since the last contact · minimum 20h — waived by Demo Merchant",
+    );
+  });
+
+  it("does not waive quiet hours", () => {
+    const result = run(subject(), forced(NIGHT));
+
+    expect(result.verdict).toBe("blocked");
+    expect(result.outcome).toMatchObject({ kind: "defer" });
+    expect(find(result.checks, "Quiet hours").verdict).toBe("block");
+  });
+
+  it("does not waive an opt-out", () => {
+    const result = run(subject({ optedOutAt: new Date("2026-08-01T00:00:00.000Z") }), forced());
+
+    expect(result.verdict).toBe("blocked");
+    expect(result.outcome).toMatchObject({ kind: "halt" });
+    expect(find(result.checks, "Opt-out").verdict).toBe("block");
+  });
+
+  it("does not waive the attempt cap", () => {
+    const result = run(subject({ attemptsUsed: 4 }), forced());
+
+    expect(result.verdict).toBe("blocked");
+    expect(result.outcome).toMatchObject({ kind: "exhaust" });
+    expect(find(result.checks, "Attempt cap").verdict).toBe("block");
+  });
+
+  it("does not waive a channel cap", () => {
+    const result = run(
+      subject({ channelUsage: { WHATSAPP: 0, EMAIL: 0, VOICE: 1, RETRY: 0 } }),
+      forced(),
+    );
+
+    expect(result.verdict).toBe("blocked");
+    expect(find(result.checks, "Channel cap").verdict).toBe("block");
+  });
+
+  it("leaves an unforced call exactly as it was", () => {
+    const withOverride = run(inCoolDown(), action({ channel: "VOICE" }));
+    expect(withOverride.verdict).toBe("blocked");
+    expect(find(withOverride.checks, "Cool-down").note).toBe(
+      "5h since the last contact · minimum 20h",
+    );
+  });
+});

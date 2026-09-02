@@ -62,6 +62,18 @@ export class CaseOverridesService {
     kind: OverrideKind,
     by: string,
     note: string | null,
+    /**
+     * A forced call: the merchant has been shown what is blocking it and said
+     * go anyway (D-160). Ignored for every other override — the other four do
+     * not pass through the gate, so there is nothing for them to override.
+     */
+    force = false,
+    /**
+     * The checks that were objecting when the merchant pressed through, read
+     * off a dry run of the gate before anything moved. Named on the ledger row
+     * so "forced" says what it was forced past.
+     */
+    waived: string[] = [],
   ) {
     const record = await this.prisma.case.findFirst({
       where: { id: caseId, merchantId },
@@ -98,6 +110,15 @@ export class CaseOverridesService {
         message: `${toCaseRef(caseId)} is ${record.stage}; the agent no longer works it.`,
       });
     }
+    // The one bound the override does not lift, refused here rather than in the
+    // gate so the merchant is told at the click instead of watching a call
+    // vanish into a queue. `UNWAIVABLE_CHECKS` is the same rule stated where
+    // the evaluation happens; this is it stated where the button is.
+    if (kind === "call" && force && record.customer.optedOutAt !== null) {
+      const message = `${toCaseRef(caseId)} — this customer replied STOP. An opt-out is the customer's, not the merchant's, and no override lifts it.`;
+      throw new BadRequestException({ error: message, message });
+    }
+
     if (kind === "call" && record.pausedAt !== null) {
       throw new BadRequestException({
         error: `${toCaseRef(caseId)} is paused — resume it before asking Boa to call.`,
@@ -122,7 +143,13 @@ export class CaseOverridesService {
     }
 
     const at = this.clock.now();
-    const detail = this.detailFor(kind, by, note);
+    const forced = kind === "call" && force;
+    // The action the ledger row will carry, so the log line, the socket frame
+    // and the response all name the same thing the chain does.
+    const ledgerAction = forced ? "CALL_FORCED_BY_HUMAN" : LEDGER_ACTION[kind];
+    const detail = forced
+      ? `Call forced by ${by}${note ? ` · ${note}` : ""}`
+      : this.detailFor(kind, by, note);
 
     // Everything the override changes lands in one transaction with the ledger
     // row that witnesses it, for the same reason a case event does (ADR-9).
@@ -137,16 +164,20 @@ export class CaseOverridesService {
         chain: toCaseRef(caseId),
         caseId,
         actor: "HUMAN",
-        action: LEDGER_ACTION[kind],
+        action: ledgerAction,
         detail,
         at,
         payload: {
           case_id: toCaseRef(caseId),
-          override: LEDGER_ACTION[kind],
+          override: ledgerAction,
           by,
           stage_at_override: record.stage,
           ...(note ? { note } : {}),
-          effect: EFFECT[kind],
+          // What was stepped over, by name. A forced call that recorded only
+          // "forced" would be the same empty claim as a verification button
+          // that hashes nothing (B-81).
+          ...(forced ? { waived: waived.length > 0 ? waived : ["nothing — the gate had no objection"] } : {}),
+          effect: forced ? FORCED_CALL_EFFECT : EFFECT[kind],
         },
       });
     });
@@ -167,9 +198,10 @@ export class CaseOverridesService {
           kind: "case.step",
           caseId,
           jobId: `case:${caseId}:step:${record.attemptsUsed}`,
-          reason: `Call requested by ${by}`,
+          reason: force ? `Call forced by ${by}` : `Call requested by ${by}`,
           expectAttempt: record.attemptsUsed,
           channel: "VOICE",
+          ...(force ? { force: { by } } : {}),
         },
         { delayMs: 0 },
       );
@@ -212,7 +244,7 @@ export class CaseOverridesService {
       merchantId,
       caseId: toCaseRef(caseId),
       stage: after.stage,
-      kind: LEDGER_ACTION[kind],
+      kind: ledgerAction,
       recoveredPaise: after.recoveredAmountPaise,
       attempts: after.attemptsUsed,
     });
@@ -235,9 +267,9 @@ export class CaseOverridesService {
 
     this.domain.publish({ name: "kpi.updated", merchantId });
 
-    this.logger.log(`${toCaseRef(caseId)} ${LEDGER_ACTION[kind]} by ${by}`);
+    this.logger.log(`${toCaseRef(caseId)} ${ledgerAction} by ${by}`);
 
-    return { ok: true, override: LEDGER_ACTION[kind], stage: after.stage, row };
+    return { ok: true, override: ledgerAction, stage: after.stage, row };
   }
 
   private detailFor(kind: OverrideKind, by: string, note: string | null): string {
@@ -261,6 +293,10 @@ const DETAIL: Record<OverrideKind, string> = {
   call: "Call requested",
   "resolve-external": "Resolved externally",
 };
+
+/** What a forced call actually does, for the ledger row's `effect`. */
+const FORCED_CALL_EFFECT =
+  "Boa calls now — the cool-down is waived by a named human and recorded as waived; quiet hours, the opt-out, the caps and every other bound still apply";
 
 const EFFECT: Record<OverrideKind, string> = {
   pause: "Every outbound action is refused at the gate until a human resumes it; queued work cancelled",

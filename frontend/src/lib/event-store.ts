@@ -119,6 +119,11 @@ export function caseStateOf(rows: readonly AuditEntry[]): CaseState {
         state.appended += 1;
         break;
       case OVERRIDE_ACTIONS.call:
+      // A call a human forced past the cool-down (D-160). Folded identically:
+      // it is still a request rather than a state, and what makes it different
+      // — which bound was waived, and by whom — is on the row itself rather
+      // than in this fold.
+      case "CALL_FORCED_BY_HUMAN":
         // A request, not a state: the call itself lands on the timeline as a
         // voice event when the gate lets it run (D-145).
         state.last = "call";

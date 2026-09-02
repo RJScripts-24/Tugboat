@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState, useTransition } from "react";
 
 import { ChevronRightIcon } from "@/components/dashboard/icons";
-import { overrideCase } from "@/lib/actions";
+import { overrideCase, previewCall, type CallPreview } from "@/lib/actions";
 import { clockAnchorLabel } from "@/lib/clock";
 import type { CaseDetailWithNeighbours } from "@/lib/case-detail-data";
 import { caseStateOf, OVERRIDE_ROUTES, type OverrideKind } from "@/lib/event-store";
 import { useLiveRefresh } from "@/lib/live";
+import { CallGateDialog } from "./call-gate-dialog";
 import { CaseFacts } from "./case-facts";
 import { CaseLedger } from "./case-ledger";
 import { CaseTimeline } from "./case-timeline";
@@ -68,6 +69,8 @@ export function CaseView({
    */
   const state = useMemo(() => caseStateOf(detail.audit), [detail.audit]);
 
+  const [callPreview, setCallPreview] = useState<CallPreview | null>(null);
+
   const override = useCallback(
     (kind: OverrideKind) => {
       setError(null);
@@ -81,6 +84,42 @@ export function CaseView({
     },
     [record.id],
   );
+
+  /**
+   * Ask the gate before asking for the call (D-160).
+   *
+   * With no objection this is the old behaviour exactly: request the rung and
+   * let the Executor run it. With one, the merchant is shown what is holding it
+   * rather than watching a request disappear into a worker that will refuse it.
+   */
+  const requestCall = useCallback(() => {
+    setError(null);
+    startTransition(async () => {
+      const preview = await previewCall(record.id);
+      if (!preview.ok) {
+        setError(preview.error);
+        return;
+      }
+
+      if (preview.data.allowed) {
+        const result = await overrideCase(record.id, "call");
+        if (!result.ok) setError(result.error);
+        return;
+      }
+
+      setCallPreview(preview.data);
+    });
+  }, [record.id]);
+
+  /** The merchant read the objections and said ring anyway. */
+  const forceCall = useCallback(() => {
+    setError(null);
+    startTransition(async () => {
+      const result = await overrideCase(record.id, "call", undefined, true);
+      setCallPreview(null);
+      if (!result.ok) setError(result.error);
+    });
+  }, [record.id]);
 
   return (
     <div className="space-y-3">
@@ -108,9 +147,20 @@ export function CaseView({
           state={state}
           paused={detail.pausedAt !== null}
           onOverride={override}
+          onRequestCall={requestCall}
           busy={pending}
         />
       </div>
+
+      {callPreview ? (
+        <CallGateDialog
+          caseId={record.id}
+          preview={callPreview}
+          busy={pending}
+          onProceed={forceCall}
+          onCancel={() => setCallPreview(null)}
+        />
+      ) : null}
     </div>
   );
 }

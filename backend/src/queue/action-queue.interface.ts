@@ -50,6 +50,14 @@ export type QueuedJob = {
    * (B-15).
    */
   expectAttempt?: number;
+  /**
+   * A named human forcing this rung past the bounds they may waive (D-160).
+   *
+   * Carried on the job rather than resolved when it runs, because the person
+   * who pressed the button is the person the ledger has to name, and by the
+   * time the worker picks this up they are gone.
+   */
+  force?: { by: string };
 };
 
 export type EnqueueOptions = {

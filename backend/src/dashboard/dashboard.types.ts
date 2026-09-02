@@ -64,5 +64,13 @@ export type ShellStatus = {
   onDuty: boolean;
   policyVersion: string;
   seed: number;
+  /**
+   * How the narrated population splits (B-83). The Control Tower shows the
+   * promoted batch *and* every live case, so a header that prints the seed
+   * beside a single total credits that seed with cases it never generated —
+   * and the Simulation Lab, reading the same run, prints a smaller number.
+   */
+  batchCases: number;
+  liveCases: number;
   playbooks: number;
 };

@@ -68,11 +68,17 @@ export async function overrideCase(
   caseId: string,
   kind: OverrideKind,
   note?: string,
+  /**
+   * Only meaningful on `call`: the merchant has read the preview and chosen to
+   * ring through a cool-down (D-160). The gate still runs and still refuses
+   * everything else.
+   */
+  force?: boolean,
 ): Promise<ActionResult<OverrideResult>> {
   try {
     const data = await apiFetch<OverrideResult>(`/cases/${encodeURIComponent(caseId)}/${kind}`, {
       method: "POST",
-      body: note ? { note } : {},
+      body: { ...(note ? { note } : {}), ...(force ? { force: true } : {}) },
     });
 
     revalidatePath(`/cases/${caseId}`);
@@ -89,6 +95,35 @@ export async function overrideCase(
     // a rule somebody has to remember.
     revalidatePath("/approvals");
 
+    return { ok: true, data };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * What would stop a call on this case, asked before one is requested.
+ *
+ * A server action rather than a `queries.ts` reader because the dialog behind
+ * "Ask Boa to call now" is a client component, and `queries.ts` is
+ * `import "server-only"` for the reason that keeps the session cookie out of
+ * the browser (D-119).
+ *
+ * Reads nothing of its own: the API dry-runs the same `evaluateGate` the
+ * Executor will run, so the dialog lists the rules that will actually answer.
+ */
+export type CallPreview = {
+  allowed: boolean;
+  blocks: { name: string; note: string; waivable: boolean }[];
+  /** Something is objecting that no override lifts, so there is no way through. */
+  refused: boolean;
+};
+
+export async function previewCall(caseId: string): Promise<ActionResult<CallPreview>> {
+  try {
+    const data = await apiFetch<CallPreview>(
+      `/cases/${encodeURIComponent(caseId)}/call-preview`,
+    );
     return { ok: true, data };
   } catch (error) {
     return failure(error);

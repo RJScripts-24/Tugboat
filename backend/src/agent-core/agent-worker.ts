@@ -59,6 +59,10 @@ export class AgentWorker implements OnApplicationBootstrap {
       return this.executor.raiseHandover(job.caseId, job.reason);
     }
 
-    return this.executor.step(job.caseId, { expectAttempt: job.expectAttempt, channel: job.channel });
+    return this.executor.step(job.caseId, {
+      expectAttempt: job.expectAttempt,
+      channel: job.channel,
+      force: job.force,
+    });
   }
 }

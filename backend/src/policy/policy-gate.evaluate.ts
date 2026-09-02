@@ -90,7 +90,40 @@ export type GateAction = {
    * halt and the opt-out are bounds, not questions, and no approval lifts them.
    */
   approvedBy?: { gate: ApprovalGate; by: string; at: Date };
+  /**
+   * A named human forcing this action past the bounds they are entitled to
+   * waive (D-160).
+   *
+   * Distinct from `approvedBy`, which answers a gate that asked a question.
+   * This answers no question: it is a merchant looking at one case and
+   * deciding to ring now rather than wait out the cool-down. The waived check
+   * stays in `checks` as a `skip` naming who waived it, so the timeline and the
+   * ledger show what was stepped over rather than a clean run that never
+   * happened.
+   *
+   * Scope is `WAIVABLE_CHECKS`, which is the cool-down and nothing else. Quiet
+   * hours, the caps and the opt-out refuse a forced call exactly as they refuse
+   * an unforced one.
+   */
+  override?: { by: string; at: Date };
 };
+
+/**
+ * The only bound a human override lifts.
+ *
+ * A cool-down is pacing, and pacing is the merchant's to spend: it exists so an
+ * unattended agent does not nag somebody every ten minutes, and a person
+ * standing on one case deciding to ring now is exactly the judgement it was
+ * protecting against making badly. So this one, and deliberately only this one.
+ *
+ * Everything else the gate enforces keeps refusing: the attempt and channel
+ * caps, the quiet window, mandate spacing, the deadline, a lane the merchant
+ * switched off, a sentiment halt, and the opt-out. Those are either regulatory
+ * (TRAI's DND window, a customer who replied STOP) or the shape of the
+ * product's own promise that a bounded agent stays bounded — and a button that
+ * spends all of them is not an override, it is a bypass with a nicer name.
+ */
+export const WAIVABLE_CHECKS: readonly string[] = ["Cool-down"];
 
 export type Evaluation = {
   verdict: GateVerdict;
@@ -155,7 +188,15 @@ export function evaluateGate(
     steps.push(representation(subject, at, pack));
   }
 
-  const outcome = steps
+  // A human standing on the case waives what is theirs to waive. The checks
+  // themselves are not deleted — each one becomes a `skip` that names the
+  // person, so the decision row, the timeline and the ledger all record which
+  // bound was stepped over and by whom.
+  const effective = action.override
+    ? steps.map((step) => waive(step, action.override!.by))
+    : steps;
+
+  const outcome = effective
     .map((step) => step.outcome)
     .filter((value): value is GateOutcome => value !== undefined)
     .sort((a, b) => OUTCOME_RANK[a.kind] - OUTCOME_RANK[b.kind])[0] ?? { kind: "allow" as const };
@@ -163,7 +204,7 @@ export function evaluateGate(
   return {
     verdict: toVerdict(outcome),
     outcome,
-    checks: steps.map((step) => step.check),
+    checks: effective.map((step) => step.check),
     gate: outcome.kind === "approve" ? outcome.gate : null,
     rescheduledFor: outcome.kind === "defer" ? outcome.until : null,
     terminalStage:
@@ -175,6 +216,27 @@ function toVerdict(outcome: GateOutcome): GateVerdict {
   if (outcome.kind === "allow") return "allowed";
   if (outcome.kind === "approve") return "needs_approval";
   return "blocked";
+}
+
+/**
+ * Drops one step's objection, keeping the check as a record that it objected.
+ *
+ * Written as a rewrite rather than a filter for the same reason the gate logs
+ * its allows: a compliance reader has to be able to see that quiet hours were
+ * evaluated, that they blocked, and that a named person overrode them. A check
+ * that vanishes when it is inconvenient proves nothing.
+ */
+function waive(step: Step, by: string): Step {
+  if (!step.outcome) return step;
+  if (!WAIVABLE_CHECKS.includes(step.check.name)) return step;
+
+  return {
+    check: {
+      name: step.check.name,
+      verdict: "skip",
+      note: `${step.check.note} — waived by ${by}`,
+    },
+  };
 }
 
 /* ------------------------------------------------------------------ */

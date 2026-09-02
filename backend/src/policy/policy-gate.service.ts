@@ -68,6 +68,26 @@ export class PolicyGateService {
    * these rows rather than taken from the agent's word, and a gate that logged
    * only its refusals could not prove a single quiet hour was respected.
    */
+  /**
+   * What the gate would say, without saying it.
+   *
+   * Runs the identical evaluation as `check` and writes nothing — no decision
+   * row, no timeline entry, no pass. It exists so the Control Tower can tell a
+   * merchant which bounds are holding a call *before* they decide whether to
+   * override them (D-160). A dialog that listed rules from a second, hand-kept
+   * copy of the policy would be the B-79 bug with a nicer surface, so this
+   * reuses `evaluateGate` rather than describing it.
+   *
+   * Deliberately not recorded: a question nobody acted on is not a decision,
+   * and a compliance log filling up with hypotheticals is a log that buries the
+   * real ones.
+   */
+  async preview(caseId: number, rawAction: GateAction): Promise<Evaluation> {
+    const action: GateAction = { ...rawAction, at: rawAction.at ?? this.clock.now() };
+    const { subject, pack, version } = await this.subjectFor(caseId);
+    return evaluateGate(subject, action, pack, version);
+  }
+
   async check(caseId: number, rawAction: GateAction): Promise<GateResult> {
     // Wall-clock, deliberately: this measures how long the evaluation took, and
     // a batch that has moved the agent's clock three days forward has not made
@@ -79,6 +99,55 @@ export class PolicyGateService {
     // the same code a live case runs through.
     const action: GateAction = { ...rawAction, at: rawAction.at ?? this.clock.now() };
 
+    const { subject, pack, version, policyVersionId, record } = await this.subjectFor(caseId);
+
+    const evaluation = evaluateGate(subject, action, pack, version);
+    const evaluatedInMs = Date.now() - startedAt;
+    const rows = decisionRows(evaluation, version, evaluatedInMs);
+
+    const decision = await this.record(
+      record.id,
+      action,
+      evaluation,
+      { policyVersionId, version },
+      rows,
+      evaluatedInMs,
+    );
+
+    this.logger.log(
+      `${toCaseRef(record.id)} gate ${evaluation.verdict} for ${action.channel} · ${
+        evaluation.outcome.kind === "allow" ? "no objection" : evaluation.outcome.reason
+      }`,
+    );
+
+    return {
+      ...evaluation,
+      decisionId: decision.id,
+      policyVersion: version,
+      evaluatedInMs,
+      rows,
+      pass:
+        evaluation.verdict === "allowed"
+          ? mintPass({
+              decisionId: decision.id,
+              caseId: record.id,
+              channel: action.channel,
+              policyVersion: version,
+              issuedAt: this.clock.now(),
+            })
+          : null,
+    };
+  }
+
+
+  /**
+   * Everything the evaluator needs about a case, gathered once.
+   *
+   * Extracted so `check` and `preview` cannot drift: the moment the two build
+   * their subject differently, the dialog that tells a merchant what is
+   * blocking a call stops describing the gate that will actually answer it.
+   */
+  private async subjectFor(caseId: number) {
     const record = await this.prisma.case.findUniqueOrThrow({
       where: { id: caseId },
       include: {
@@ -148,42 +217,7 @@ export class PolicyGateService {
         .filter((gate) => ROUTING_GATES.includes(gate)),
     };
 
-    const evaluation = evaluateGate(subject, action, pack, version);
-    const evaluatedInMs = Date.now() - startedAt;
-    const rows = decisionRows(evaluation, version, evaluatedInMs);
-
-    const decision = await this.record(
-      record.id,
-      action,
-      evaluation,
-      { policyVersionId, version },
-      rows,
-      evaluatedInMs,
-    );
-
-    this.logger.log(
-      `${toCaseRef(record.id)} gate ${evaluation.verdict} for ${action.channel} · ${
-        evaluation.outcome.kind === "allow" ? "no objection" : evaluation.outcome.reason
-      }`,
-    );
-
-    return {
-      ...evaluation,
-      decisionId: decision.id,
-      policyVersion: version,
-      evaluatedInMs,
-      rows,
-      pass:
-        evaluation.verdict === "allowed"
-          ? mintPass({
-              decisionId: decision.id,
-              caseId: record.id,
-              channel: action.channel,
-              policyVersion: version,
-              issuedAt: this.clock.now(),
-            })
-          : null,
-    };
+    return { subject, pack, version, policyVersionId, record };
   }
 
   /**

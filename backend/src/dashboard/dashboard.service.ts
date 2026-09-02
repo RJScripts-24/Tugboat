@@ -362,6 +362,14 @@ export class DashboardService {
       this.promotedRun(merchantId),
     ]);
 
+    // The narrated population, split by where it came from. Counted here rather
+    // than derived in the browser because the browser has the total and not the
+    // provenance, and the provenance is the whole point of the two numbers.
+    const [batchCases, liveCases] = await Promise.all([
+      run ? this.prisma.case.count({ where: { merchantId, simRunId: run.id } }) : 0,
+      this.prisma.case.count({ where: { merchantId, simRunId: null } }),
+    ]);
+
     return {
       recoveredTodayPaise: today._sum.recoveredAmountPaise ?? 0,
       activeCases: active,
@@ -370,6 +378,8 @@ export class DashboardService {
       // The seed of the batch on screen. Zero says "this dataset did not come
       // from a run", which is the honest answer for a hand-seeded database.
       seed: run?.seed ?? 0,
+      batchCases,
+      liveCases,
       playbooks: PLAYBOOK_COUNT,
     };
   }

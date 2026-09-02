@@ -220,6 +220,31 @@ export type ShellStatus = {
   policyVersion: string;
   /** The seed of the batch on screen; 0 when the dataset did not come from a run. */
   seed: number;
+  /** Narrated cases belonging to the promoted run. */
+  batchCases: number;
+  /** Narrated cases that arrived through a webhook and belong to no run. */
+  liveCases: number;
   playbooks: number;
 };
+
+/**
+ * Where the cases on screen came from, in one line (B-83).
+ *
+ * The Control Tower narrates the promoted batch *and* every live case; the
+ * Simulation Lab reports the run alone. Both headers printed "seed N · X
+ * cases", so the two pages disagreed about the size of the same seed — 229
+ * against 214 — and the difference was fifteen webhook cases that the seed
+ * never generated. The totals were right and the sentence was wrong, so the
+ * sentence names the split instead of implying there isn't one.
+ */
+export function casesProvenance(
+  status: Pick<ShellStatus, "seed" | "batchCases" | "liveCases">,
+): string {
+  const { seed, batchCases, liveCases } = status;
+  const total = batchCases + liveCases;
+
+  if (seed <= 0 || batchCases === 0) return `${total} live cases`;
+  if (liveCases === 0) return `seed ${seed} · ${batchCases} cases`;
+  return `seed ${seed} · ${total} cases (${batchCases} from the batch, ${liveCases} live)`;
+}
 

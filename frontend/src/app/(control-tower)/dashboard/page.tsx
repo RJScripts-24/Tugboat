@@ -9,6 +9,7 @@ import { MetricsStrip } from "@/components/dashboard/metrics-strip";
 import { PaymentPerformance } from "@/components/dashboard/payment-performance";
 import { RecoveryPipeline } from "@/components/dashboard/recovery-pipeline";
 import { RootCauseTable } from "@/components/dashboard/root-cause-table";
+import { casesProvenance } from "@/lib/dashboard-data";
 import {
   getActiveCases,
   getFunnel,
@@ -73,8 +74,7 @@ export default async function ControlTowerPage() {
             LIVE
           </span>
           <span>
-            {status.seed > 0 ? `seed ${status.seed} · ` : ""}
-            {kpis.revenueAtRiskCases} cases · {status.playbooks} playbooks active · policy{" "}
+            {casesProvenance(status)} · {status.playbooks} playbooks active · policy{" "}
             {status.policyVersion} · figures move as work lands
           </span>
         </p>
