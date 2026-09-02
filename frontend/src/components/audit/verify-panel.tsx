@@ -36,6 +36,7 @@ export function VerifyPanel({
   progress,
   result,
   entries,
+  total,
   target,
   onVerify,
   onTamper,
@@ -45,7 +46,10 @@ export function VerifyPanel({
   /** 0..1 across the chains, for the bar. */
   progress: number;
   result: VerifyResult | null;
+  /** Rows loaded on this page — what "Verify chain" actually walks. */
   entries: number;
+  /** Rows in the whole ledger, so the gap between the two is stated, not hidden. */
+  total: number;
   /** The row the tamper demo would pretend to edit. */
   target: LedgerRow | null;
   onVerify: () => void;
@@ -104,7 +108,7 @@ export function VerifyPanel({
       ) : result ? (
         <Verdict result={result} target={target} failed={failed} tampering={tampering} />
       ) : (
-        <Idle entries={entries} />
+        <Idle entries={entries} total={total} />
       )}
     </Section>
   );
@@ -112,13 +116,20 @@ export function VerifyPanel({
 
 /* ------------------------------------------------------------------ */
 
-function Idle({ entries }: { entries: number }) {
+function Idle({ entries, total }: { entries: number; total: number }) {
   return (
     <p className="max-w-[86ch] text-[12px] leading-[1.65] text-txt-dim">
       Every row below carries the exact string its digest was computed from, and the digest of the
-      row before it. Press <span className="text-txt">Verify chain</span> and all{" "}
-      {entries.toLocaleString("en-IN")} are recomputed here, in this browser, from those preimages —
-      nothing is asked of the server that wrote them.
+      row before it. Press <span className="text-txt">Verify chain</span> and the{" "}
+      {entries.toLocaleString("en-IN")} rows loaded here are recomputed in this browser from those
+      preimages — nothing is asked of the server that wrote them.
+      {total > entries ? (
+        <>
+          {" "}
+          The ledger holds {total.toLocaleString("en-IN")} in total; this page is the newest{" "}
+          {entries.toLocaleString("en-IN")} of them.
+        </>
+      ) : null}
     </p>
   );
 }
@@ -221,8 +232,8 @@ function Verdict({
       ) : (
         <div className="mt-2.5 flex flex-wrap items-baseline gap-x-4 gap-y-1.5">
           <p className="max-w-[76ch] text-[12px] leading-[1.65] text-txt-dim">
-            Each digest covers its own payload and the digest before it. No row in this ledger can
-            be altered, removed or reordered without every row after it in its chain failing this
+            Each digest covers its own payload and the digest before it. No row checked here can be
+            altered, removed or reordered without every row after it in its chain failing this
             check.
           </p>
           <ChalkNote tone="gold">try editing one — the button above</ChalkNote>

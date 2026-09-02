@@ -32,9 +32,15 @@ export function ArmTable({ arms }: { arms: ArmResult[] }) {
       meta={`${arms.length} policies · one batch · one seed`}
       action={
         contactRatio && shortfall ? (
+          // `shortfall` is signed, and on the committed seed-42 run it is
+          // negative: the naive arm recovers more money. The note used to
+          // hardcode the word "less" around it and printed "₹-62,066 less",
+          // which is both wrong and the one comparison this page exists to make
+          // honestly. Say which way it went and let the compliance columns
+          // beside it carry the argument.
           <ChalkNote tone="gold" arrow>
             naive sent {contactRatio.toFixed(1)}× the contacts and recovered ₹
-            {formatRupeesCompact(shortfall)} less
+            {formatRupeesCompact(Math.abs(shortfall))} {shortfall < 0 ? "more" : "less"}
           </ChalkNote>
         ) : undefined
       }

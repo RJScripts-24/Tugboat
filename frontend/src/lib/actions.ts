@@ -79,6 +79,15 @@ export async function overrideCase(
     revalidatePath("/cases");
     revalidatePath("/dashboard");
     revalidatePath("/audit");
+    // Escalating raises a handover card, so the queue a merchant reads has
+    // changed too. Leaving it out meant the row was written, the badge was
+    // right on a reload and the Approvals tab served a cached render from
+    // before the click — the third time "Escalate to me" has looked like a
+    // button that does nothing while every layer under it worked (B-73, B-75,
+    // B-77). Revalidated for every override rather than only for `escalate`:
+    // the cost is one re-read of a small page, and a rule with an exception is
+    // a rule somebody has to remember.
+    revalidatePath("/approvals");
 
     return { ok: true, data };
   } catch (error) {

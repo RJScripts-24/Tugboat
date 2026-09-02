@@ -125,9 +125,13 @@ export function AuditExplorer({
   /* Verification                                                      */
   /* ---------------------------------------------------------------- */
 
-  // Verification is always over the WHOLE ledger, never the filtered view. A
-  // chain is only verifiable end to end, and "the rows you happened to be
-  // looking at check out" is not a claim worth making.
+  // Over every row loaded, never the filtered view: a chain is only verifiable
+  // end to end, and "the rows you happened to be looking at check out" is not a
+  // claim worth making. Note the honest limit — a page is at most 2,000 rows
+  // (`PAGE_SIZE` in `lib/queries.ts`, capped by the API), so on a ledger larger
+  // than that this walks the newest page rather than the whole thing, and the
+  // panel says so. `POST /audit/verify-chain` is the server-side check that
+  // covers the rest.
   const chains = useMemo(() => chainsOf(rows), [rows]);
 
   /**
@@ -227,7 +231,7 @@ export function AuditExplorer({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="mono text-[12px] text-txt-faint">
-          seed 42 · {summary.entries.toLocaleString("en-IN")} entries · {summary.chains} chains ·{" "}
+          {summary.entries.toLocaleString("en-IN")} entries · {summary.chains} chains ·{" "}
           {oldest.day} {oldest.time.slice(0, 5)} → {newest.day} {newest.time.slice(0, 5)} IST
         </p>
 
@@ -266,7 +270,12 @@ export function AuditExplorer({
         state={state}
         progress={progress}
         result={result}
-        entries={summary.entries}
+        // `rows.length`, not `summary.entries`: the panel used to announce it
+        // was recomputing every row in the ledger and then report the page it
+        // actually had — two numbers a reader can watch disagree, on the one
+        // panel whose whole argument is that you need not take our word.
+        entries={rows.length}
+        total={summary.entries}
         target={target}
         onVerify={() => run(null)}
         onTamper={tamper}

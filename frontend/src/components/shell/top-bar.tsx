@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { SignOutIcon } from "@/components/dashboard/icons";
-import { usePendingApprovals } from "@/lib/approvals-live";
+import { usePendingApprovals } from "@/lib/live";
 import { ChalkRule } from "@/components/dashboard/chalk";
 import { NAV, titleFor } from "./nav";
 

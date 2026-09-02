@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import { ChalkRule } from "@/components/dashboard/chalk";
 import { BoaFace } from "./boa-face";
 import { MoneyValue } from "@/components/dashboard/primitives";
-import { usePendingApprovals } from "@/lib/approvals-live";
+import { usePendingApprovals } from "@/lib/live";
 import { NAV } from "./nav";
 
 /**

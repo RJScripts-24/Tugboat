@@ -3,7 +3,7 @@ import { Suspense } from "react";
 
 import { LiveRefresh } from "@/components/dashboard/live-refresh";
 import { PipelineView } from "@/components/pipeline/pipeline-view";
-import { getPipelineCases } from "@/lib/queries";
+import { getPipelineCases, getShellStatus } from "@/lib/queries";
 
 export const metadata: Metadata = {
   title: "Recovery Pipeline — Tugboat",
@@ -20,13 +20,15 @@ export const metadata: Metadata = {
  * when a case transitions — the props do not change shape for it.
  */
 export default async function PipelinePage() {
-  const cases = await getPipelineCases();
+  // The header's provenance line used to assert "seed 42 · policy v4" whatever
+  // was true; the shell already answers both, so the page asks it too.
+  const [cases, status] = await Promise.all([getPipelineCases(), getShellStatus()]);
 
   return (
     // useSearchParams needs a boundary to suspend at during prerender.
     <Suspense fallback={<PipelineSkeleton />}>
       <LiveRefresh />
-      <PipelineView cases={cases} />
+      <PipelineView cases={cases} seed={status.seed} policyVersion={status.policyVersion} />
     </Suspense>
   );
 }

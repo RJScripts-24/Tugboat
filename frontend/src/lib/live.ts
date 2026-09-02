@@ -95,6 +95,11 @@ export function useLiveRefresh(onChange: () => void, concerns: Concern[] = ["das
     const offs = concerns.flatMap((concern) => [
       subscribe(concern, "case.updated", nudge),
       subscribe(concern, "kpi.updated", nudge),
+      // A card arriving is as much a change to the queue as a card being
+      // answered. This was the one event the gateway published that nothing
+      // listened for, which is why a case escalated while the Approvals page
+      // was open never appeared on it.
+      subscribe(concern, "approval.pending", nudge),
       subscribe(concern, "approval.decided", nudge),
       subscribe(concern, "policy.changed", nudge),
     ]);

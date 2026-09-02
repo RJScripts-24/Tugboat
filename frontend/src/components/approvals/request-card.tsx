@@ -165,7 +165,7 @@ export function RequestCard({
               </p>
             ))}
             <p className="mono text-[10.5px] uppercase tracking-[0.06em] text-txt-faint">
-              Boa · planner · gemini-class
+              Boa · planner
             </p>
           </div>
 
@@ -338,7 +338,7 @@ export function RequestCard({
           <p className="mt-4 border-t border-white/[0.07] pt-3.5 text-[11px] leading-[1.55] text-txt-faint">
             {gate.rule}.{" "}
             <Link href="/policies" className="text-txt-dim underline-offset-2 hover:underline">
-              Configured in policy v4
+              Configured in Policies
             </Link>
             .
           </p>

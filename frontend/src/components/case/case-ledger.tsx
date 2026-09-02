@@ -40,11 +40,18 @@ export function CaseLedger({
   detail,
   state,
   onOverride,
+  paused,
   busy = false,
 }: {
   detail: CaseDetail;
-  /** Folded from the case's own ledger chain, never from a flag this component owns. */
+  /**
+   * Folded from the case's own ledger chain: which override came last, how many
+   * are on it, whether the case was settled outside Tugboat. Not whether it is
+   * on hold — that is `paused`, and the difference is B-82.
+   */
   state: CaseState;
+  /** `cases.pausedAt` is set: the column the PolicyGate actually enforces. */
+  paused: boolean;
   onOverride: (kind: OverrideKind) => void;
   /** An override is in flight — the buttons say so rather than firing twice. */
   busy?: boolean;
@@ -55,10 +62,18 @@ export function CaseLedger({
 
   return (
     <div className="space-y-3 self-start">
-      <OutcomeCard detail={detail} state={state} />
+      <OutcomeCard detail={detail} state={state} paused={paused} />
       <CostCard detail={detail} />
       <AuditPanel caseId={detail.record.id} rows={rows} />
-      <Overrides state={state} onOverride={onOverride} stage={detail.record.stage} busy={busy} />
+      <Overrides
+        state={state}
+        onOverride={onOverride}
+        stage={detail.record.stage}
+        paused={paused}
+        attempts={detail.record.attempts}
+        attemptCap={detail.record.attemptCap}
+        busy={busy}
+      />
     </div>
   );
 }
@@ -67,10 +82,35 @@ export function CaseLedger({
 /* Outcome                                                             */
 /* ------------------------------------------------------------------ */
 
-function OutcomeCard({ detail, state }: { detail: CaseDetail; state: CaseState }) {
+function OutcomeCard({
+  detail,
+  state,
+  paused,
+}: {
+  detail: CaseDetail;
+  state: CaseState;
+  paused: boolean;
+}) {
   const { outcome, record } = detail;
   const recovered = record.stage === "recovered";
   const share = outcome.atRiskPaise === 0 ? 0 : outcome.recoveredPaise / outcome.atRiskPaise;
+
+  /*
+   * Held by a human, and stood down: read from the server, not from the fold.
+   *
+   * `caseStateOf` is still what tells this card the *story* — which override
+   * came last, how many are on the chain, whether the case was settled
+   * elsewhere. What it must not decide any more is whether the case is on hold
+   * right now, because a fold is only as current as the rows it has. An
+   * approved handover clears `pausedAt` in the database, and until D-159 wrote
+   * a row saying so the browser went on reporting a hold the gate was no longer
+   * applying: this card read "Handed to you · Boa has stood down" over a case
+   * the agent was working, and the override buttons offered acts the API
+   * answers with 400 (B-82). `record.stage` and `pausedAt` are the two columns
+   * the API's own guards read. Reading them here is what keeps the page's
+   * offer and the API's answer the same sentence.
+   */
+  const takenByHuman = record.stage === "escalated";
 
   /*
    * An override changes the outcome, not just the note underneath it.
@@ -82,25 +122,25 @@ function OutcomeCard({ detail, state }: { detail: CaseDetail; state: CaseState }
    */
   const stageLabel = state.resolvedExternally
     ? "Closed externally"
-    : state.takenByHuman
+    : takenByHuman
       ? "With you"
-      : state.paused
+      : paused
         ? "Paused"
         : STAGE_META[record.stage].label;
 
   const headline = state.resolvedExternally
     ? "Resolved outside Tugboat"
-    : state.takenByHuman
+    : takenByHuman
       ? "Handed to you"
-      : state.paused
+      : paused
         ? "Paused by you"
         : outcome.headline;
 
   const detailLine = state.resolvedExternally
     ? "Closed by a human, not by the agent. Nothing further will be attempted and no money is counted as recovered here."
-    : state.takenByHuman
+    : takenByHuman
       ? "Boa has stood down. The case is yours until you release it."
-      : state.paused
+      : paused
         ? "Boa is stood down on this case. Scheduled work will not run until you resume it."
         : outcome.detail;
 
@@ -149,7 +189,9 @@ function OutcomeCard({ detail, state }: { detail: CaseDetail; state: CaseState }
         ) : null}
       </dl>
 
-      {state.last ? <OverrideNote last={state.last} appended={state.appended} /> : null}
+      {state.last ? (
+        <OverrideNote last={state.last} appended={state.appended} stillHeld={takenByHuman} />
+      ) : null}
 
       {/* Whoever put it there. Taking a case used to hide this link — the note
           above said the queue held the case and gave you no way to reach it,
@@ -167,12 +209,31 @@ function OutcomeCard({ detail, state }: { detail: CaseDetail; state: CaseState }
   );
 }
 
-function OverrideNote({ last, appended }: { last: OverrideKind; appended: number }) {
+/**
+ * The last override, in a sentence — and only the part of it that is still true.
+ *
+ * The fold names the last override correctly for as long as the chain is read
+ * forwards, and then keeps saying it. A case taken and handed back still has
+ * `escalate` as its last override row, so this note went on announcing a
+ * question the merchant had already answered (B-82). The row is history and
+ * stays; the clause about what happens next is checked against the case.
+ */
+function OverrideNote({
+  last,
+  appended,
+  stillHeld,
+}: {
+  last: OverrideKind;
+  appended: number;
+  /** The case is escalated *now*, not merely was. */
+  stillHeld: boolean;
+}) {
   const copy = {
     pause: "You paused Boa on this case. Nothing further will be sent until it is resumed.",
     resume: "You resumed Boa. The pause is still on the ledger — it was appended over, not undone.",
-    escalate:
-      "You took this case. Boa has stood down, and the approvals queue is now asking you whether it should carry on or close the case.",
+    escalate: stillHeld
+      ? "You took this case. Boa has stood down, and the approvals queue is now asking you whether it should carry on or close the case."
+      : "You took this case and it has since been handed back to Boa. The row is still on the ledger — appended over, not undone.",
     resolve: "Marked resolved outside Tugboat. The case is closed and no action will follow.",
     call: "You asked Boa to call. The gate answers first — quiet hours, opt-out and the one-call cap — and the call goes out at the next moment it allows.",
   }[last];
@@ -444,11 +505,17 @@ function Overrides({
   state,
   onOverride,
   stage,
+  paused,
+  attempts,
+  attemptCap,
   busy,
 }: {
   state: CaseState;
   onOverride: (kind: OverrideKind) => void;
   stage: string;
+  paused: boolean;
+  attempts: number;
+  attemptCap: number;
   busy: boolean;
 }) {
   // Until React has hydrated, these buttons have no click handler: a click in
@@ -476,7 +543,32 @@ function Overrides({
    * is true. `halted` is deliberately excluded: an opt-out or a hostile reply
    * closed that case, and a click should not reopen it.
    */
-  const canEscalate = !done && !state.takenByHuman && stage !== "recovered" && stage !== "halted";
+  const canEscalate = !done && stage !== "escalated" && stage !== "recovered" && stage !== "halted";
+
+  /*
+   * A case you already took is not a dead button, it is a link (B-80).
+   *
+   * "Escalate to me" disables itself once the chain shows the case is yours,
+   * which is correct and reads exactly like the failure it is not: the click
+   * does nothing, the tooltip needs a hover to find, and the case is in fact
+   * waiting for you one page away. Every escalated case now has a card
+   * (D-151), so where the button would be dead there is somewhere to go
+   * instead.
+   */
+  const alreadyYours = stage === "escalated" && !done;
+
+  /*
+   * A case with no attempts left has nothing to call with (B-82).
+   *
+   * "Ask Boa to call now" was offered on a `waiting` case whose fourth of four
+   * attempts was already spent. The click was honest all the way down — the
+   * override wrote its row, the planner drew a voice rung, the gate refused it
+   * on the attempt cap — and the visible result was that asking for a call
+   * exhausted the case instead of placing one. The bound is on the same page,
+   * two panels up ("Attempts · 4 of 4"); the button is the last surface that
+   * should have to be told.
+   */
+  const spent = attempts >= attemptCap;
 
   // Why each button is off, in the words the tooltip will use. A disabled
   // control that does not say why is the same dead end as one that silently
@@ -496,7 +588,7 @@ function Overrides({
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => onOverride(state.paused ? "resume" : "pause")}
+          onClick={() => onOverride(paused ? "resume" : "pause")}
           className="btn-op-quiet"
           disabled={waiting || closed || done}
           title={reason(
@@ -505,39 +597,48 @@ function Overrides({
           )}
         >
           <PauseIcon className="h-[11px] w-[11px]" />
-          {state.paused ? "Resume agent" : "Pause agent on this case"}
+          {paused ? "Resume agent" : "Pause agent on this case"}
         </button>
 
-        <button
-          type="button"
-          onClick={() => onOverride("escalate")}
-          className="btn-op-quiet"
-          disabled={waiting || !canEscalate}
-          title={reason(
-            !canEscalate,
-            done
-              ? "This case was closed outside Tugboat"
-              : state.takenByHuman
-                ? "You already have this case"
-                : closedWhy,
-          )}
-        >
-          <EscalateIcon className="h-[11px] w-[11px]" />
-          Escalate to me
-        </button>
+        {alreadyYours ? (
+          <Link href="/approvals" className="btn-op-quiet">
+            <EscalateIcon className="h-[11px] w-[11px]" />
+            This case is yours · answer it in Approvals
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onOverride("escalate")}
+            className="btn-op-quiet"
+            disabled={waiting || !canEscalate}
+            title={reason(
+              !canEscalate,
+              done
+                ? "This case was closed outside Tugboat"
+                : stage === "escalated"
+                  ? "You already have this case"
+                  : closedWhy,
+            )}
+          >
+            <EscalateIcon className="h-[11px] w-[11px]" />
+            Escalate to me
+          </button>
+        )}
 
         <button
           type="button"
           onClick={() => onOverride("call")}
           className="btn-op-quiet"
-          disabled={waiting || closed || done || state.paused}
+          disabled={waiting || closed || done || paused || spent}
           title={reason(
-            closed || done || state.paused,
+            closed || done || paused || spent,
             done
               ? "This case was closed outside Tugboat"
               : closed
                 ? closedWhy
-                : "Boa is paused on this case — resume it first",
+                : paused
+                  ? "Boa is paused on this case — resume it first"
+                  : `All ${attemptCap} attempts are used, so the gate would refuse the call. Raise the cap in Policies if this case should keep going`,
           )}
         >
           <PhoneIcon className="h-[11px] w-[11px]" />

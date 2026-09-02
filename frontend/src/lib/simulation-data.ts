@@ -79,7 +79,7 @@ export const ARM_META: Record<
       "Every case chased on every channel, immediately, with no diagnosis, no caps and no quiet hours.",
   },
   tugboat: {
-    label: "TUGBOAT — full policy v4",
+    label: "TUGBOAT — full policy",
     short: "TUGBOAT",
     caption:
       "Diagnose first, cheapest intervention that fits the cause, every action through the gate.",

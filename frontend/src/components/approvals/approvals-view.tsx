@@ -244,8 +244,11 @@ export function ApprovalsView({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="mono text-[12px] text-txt-faint">
-          seed 42 · {open.length} waiting · ₹{plain(heldPaise)} held · median response{" "}
-          {formatLatency(medianSeconds)} · policy v4
+          {/* Was "seed 42 … policy v4": one literal over a live queue that has
+              no seed, and another that disagreed with the top bar the moment
+              anybody saved a pack. */}
+          {open.length} waiting · ₹{plain(heldPaise)} held · median response{" "}
+          {formatLatency(medianSeconds)}
         </p>
 
         {tab === "pending" && open.length > 1 ? (

@@ -56,11 +56,15 @@ export function CaseView({
   );
 
   /**
-   * Paused, taken over, closed elsewhere — folded from the case's own chain.
+   * Which override came last, and closed-elsewhere — folded from the chain.
    *
-   * Not from a `pausedAt` boolean, even though the column exists and the
-   * response carries it. The fold is what makes a resume a row that follows a
-   * pause rather than one that erases it, and the audit panel below shows both.
+   * The fold is what makes a resume a row that *follows* a pause rather than
+   * one that erases it, and the audit panel below shows both. What it no
+   * longer decides is whether the case is on hold: a fold is only as current
+   * as the rows it has, and an approved handover lifts the hold in the
+   * database (D-151). That now writes its own row (D-159) — but a page that
+   * offers acts the API will refuse should not have needed one (B-82), so the
+   * hold is read from `pausedAt`, the column the gate enforces.
    */
   const state = useMemo(() => caseStateOf(detail.audit), [detail.audit]);
 
@@ -99,7 +103,13 @@ export function CaseView({
 
         <CaseTimeline events={detail.events} pending={detail.pending} revealed={0} />
 
-        <CaseLedger detail={detail} state={state} onOverride={override} busy={pending} />
+        <CaseLedger
+          detail={detail}
+          state={state}
+          paused={detail.pausedAt !== null}
+          onOverride={override}
+          busy={pending}
+        />
       </div>
     </div>
   );

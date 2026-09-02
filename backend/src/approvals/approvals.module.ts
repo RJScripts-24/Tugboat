@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 
+import { AuditModule } from "../audit/audit.module";
 import { CasesModule } from "../cases/cases.module";
 import { PolicyModule } from "../policy/policy.module";
 import { ApprovalsController } from "./approvals.controller";
@@ -16,7 +17,7 @@ import { ApprovalsService } from "./approvals.service";
  * through the Executor" true.
  */
 @Module({
-  imports: [CasesModule, PolicyModule],
+  imports: [AuditModule, CasesModule, PolicyModule],
   controllers: [ApprovalsController],
   providers: [ApprovalsService],
   exports: [ApprovalsService],

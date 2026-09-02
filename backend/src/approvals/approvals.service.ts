@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import type { Approval, ApprovalGate, Case, Customer, Prisma } from "@prisma/client";
 
+import { AuditWriterService } from "../audit/audit-writer.service";
 import { CaseEventsService, isUniqueViolation, withSeqRetry } from "../cases/case-events.service";
 import { CasesService } from "../cases/cases.service";
 import { OPT_OUT_LINE, ensureOptOut } from "../channels/message-copy";
@@ -146,6 +147,7 @@ export class ApprovalsService {
     private readonly prisma: PrismaService,
     private readonly cases: CasesService,
     private readonly events: CaseEventsService,
+    private readonly audit: AuditWriterService,
     private readonly policy: PolicyService,
     private readonly clock: ClockService,
     private readonly domain: DomainEventsService,
@@ -648,6 +650,42 @@ export class ApprovalsService {
               ],
             } as unknown as Prisma.InputJsonValue,
           });
+
+          /*
+           * The hold was lifted a few lines up, and until D-159 the chain had
+           * no way of knowing it.
+           *
+           * The browser decides what a case's override buttons may do by
+           * folding that case's own ledger (`caseStateOf`), and the only row
+           * that clears a hold is `AGENT_RESUMED_BY_HUMAN`. An approved
+           * handover cleared `pausedAt` in the database and wrote nothing but
+           * `APPROVAL_DECIDED` — so the two surfaces disagreed about one fact.
+           * The API would place a call on request; the page had "Ask Boa to
+           * call now" disabled as paused, and offered "Resume agent" beside it,
+           * which the API answers with "this case is not paused" (B-82).
+           * Handing a case back to the agent is a resume. The chain says so.
+           */
+          if (input.liftHold) {
+            await this.audit.append(tx, {
+              merchantId: row.case.merchantId,
+              chain: toCaseRef(row.caseId),
+              caseId: row.caseId,
+              actor: "HUMAN",
+              action: "AGENT_RESUMED_BY_HUMAN",
+              detail: `Agent resumed by ${input.by} · handover approved`,
+              at: decidedAt,
+              payload: {
+                case_id: toCaseRef(row.caseId),
+                override: "AGENT_RESUMED_BY_HUMAN",
+                by: input.by,
+                stage_at_override: row.case.stage,
+                approval: row.id,
+                effect: input.restart
+                  ? `The agent works the case again from attempt 1 of ${row.case.attemptCap}`
+                  : "The agent works the case again from its current stage",
+              },
+            });
+          }
 
           return approval;
         }),

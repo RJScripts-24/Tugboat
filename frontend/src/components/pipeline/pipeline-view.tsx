@@ -42,7 +42,17 @@ import { PipelineTable } from "./pipeline-table";
  * list beneath it is a summary nobody can trust, and this one cannot drift by
  * construction.
  */
-export function PipelineView({ cases }: { cases: PipelineCase[] }) {
+export function PipelineView({
+  cases,
+  seed,
+  policyVersion,
+}: {
+  cases: PipelineCase[];
+  /** The promoted run's seed, or 0 when this data did not come from a run. */
+  seed: number;
+  /** The pack actually in force, read from `GET /policies` by the page. */
+  policyVersion: string;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -80,12 +90,12 @@ export function PipelineView({ cases }: { cases: PipelineCase[] }) {
     [buildHref, router],
   );
 
-  const { live, flashed } = useLiveStages(cases);
+  const flashed = useFlashOnMove(cases);
 
-  const rows = useMemo(() => {
-    const withLive = live.size === 0 ? cases : cases.map((row) => applyLive(row, live));
-    return applySort(applyFilters(withLive, filters), sort);
-  }, [cases, live, filters, sort]);
+  const rows = useMemo(
+    () => applySort(applyFilters(cases, filters), sort),
+    [cases, filters, sort],
+  );
 
   const totals = useMemo(() => summarise(rows), [rows]);
   const counts = useMemo(() => countTypes(cases), [cases]);
@@ -99,9 +109,12 @@ export function PipelineView({ cases }: { cases: PipelineCase[] }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Both figures were literals — "seed 42" over whatever run is
+            promoted, and "policy v4" while the top bar three inches above read
+            the pack actually in force. One fact, two numbers, one screen. */}
         <p className="mono text-[12px] text-txt-faint">
-          seed 42 · {cases.length} cases · contacts masked · every outbound action gated by
-          policy v4
+          {seed > 0 ? `seed ${seed} · ` : ""}
+          {cases.length} cases · contacts masked · every outbound action gated by {policyVersion}
         </p>
         <ExportButton rows={rows} />
       </div>
@@ -156,56 +169,40 @@ export function PipelineView({ cases }: { cases: PipelineCase[] }) {
 /* ------------------------------------------------------------------ */
 
 /**
- * Cases move while you watch them (PRD 6.4: every list updates live, and the
- * change flashes).
+ * Flashes the rows that actually moved.
  *
- * Stands in for the `case.updated` Socket.IO room. The transitions are legal
- * moves of the case state machine (ADR-3) applied to whichever case is next in
- * line, not a canned list of ids - so it keeps working whatever the batch looks
- * like. It stops after eight moves: the point is to show the board breathing,
- * not to quietly rewrite the evidence while a panelist reads it.
+ * This used to be a `setInterval` walking a canned list of eight legal
+ * transitions and applying them to whichever case was next in line - a case
+ * promoted to `recovered` every 5.2 seconds, its full amount written into
+ * `recoveredPaise`, and the whole invention folded into the summary strip above
+ * and the CSV export below. It stood in for the `case.updated` room while that
+ * room was being built, and then outlived it.
+ *
+ * The room exists. `<LiveRefresh>` re-runs the server read on `case.updated`,
+ * so a real transition arrives as a new `cases` prop. All this has to do is
+ * notice which stage changed between one prop and the next, which is the only
+ * thing the animation was ever needed for: a list that redraws with no signal
+ * reads as a list that did not change.
  */
-const LIVE_SCRIPT: { from: Stage; to: Stage }[] = [
-  { from: "intervening", to: "recovered" },
-  { from: "detected", to: "diagnosed" },
-  { from: "diagnosed", to: "intervening" },
-  { from: "waiting", to: "intervening" },
-  { from: "intervening", to: "waiting" },
-  { from: "promised", to: "recovered" },
-  { from: "detected", to: "diagnosed" },
-  { from: "intervening", to: "recovered" },
-];
-
-const STEP_MS = 5200;
-
-function useLiveStages(cases: PipelineCase[]) {
-  const [live, setLive] = useState<Map<string, Stage>>(new Map());
+function useFlashOnMove(cases: PipelineCase[]): Set<string> {
+  const seen = useRef<Map<string, Stage> | null>(null);
   const [flashed, setFlashed] = useState<Set<string>>(new Set());
-  const step = useRef(0);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      if (step.current >= LIVE_SCRIPT.length) {
-        clearInterval(id);
-        return;
-      }
-      const move = LIVE_SCRIPT[step.current];
-      step.current += 1;
+    const next = new Map(cases.map((row) => [row.id, row.stage]));
+    const previous = seen.current;
+    seen.current = next;
 
-      setLive((current) => {
-        const target = cases.find(
-          (row) => row.stage === move.from && !current.has(row.id),
-        );
-        if (!target) return current;
+    // First render is not a movement: every row would flash at once.
+    if (previous === null) return;
 
-        const next = new Map(current);
-        next.set(target.id, move.to);
-        setFlashed(new Set([target.id]));
-        return next;
-      });
-    }, STEP_MS);
+    const moved = new Set<string>();
+    for (const [id, stage] of next) {
+      const before = previous.get(id);
+      if (before !== undefined && before !== stage) moved.add(id);
+    }
 
-    return () => clearInterval(id);
+    if (moved.size > 0) setFlashed(moved);
   }, [cases]);
 
   // The flash is a signal that something changed, so it has to expire; a row
@@ -216,41 +213,7 @@ function useLiveStages(cases: PipelineCase[]) {
     return () => clearTimeout(id);
   }, [flashed]);
 
-  return { live, flashed };
-}
-
-function applyLive(row: PipelineCase, live: Map<string, Stage>): PipelineCase {
-  const stage = live.get(row.id);
-  if (!stage || stage === row.stage) return row;
-
-  const recovered = stage === "recovered";
-  return {
-    ...row,
-    stage,
-    recoveredPaise: recovered ? row.amountPaise : 0,
-    attempts: stage === "intervening" ? Math.min(row.attemptCap, row.attempts + 1) : row.attempts,
-    nextAction: nextActionAfterMove(stage, row),
-    updatedMinutesAgo: 0,
-  };
-}
-
-function nextActionAfterMove(stage: Stage, row: PipelineCase): string {
-  switch (stage) {
-    case "diagnosed":
-      return "Planning intervention";
-    case "intervening":
-      return row.type === "MANDATE_FAILED"
-        ? `Re-present ${Math.min(row.attemptCap, row.attempts + 1)}/${row.attemptCap}`
-        : `WhatsApp nudge · ${Math.min(row.attemptCap, row.attempts + 1)}/${row.attemptCap}`;
-    case "waiting":
-      // Was "Cool-down · 20h left" — a hardcoded bound and an invented
-      // countdown: wrong the moment the pack changes, and wrong anyway for a
-      // case nineteen hours into its wait (B-81). The row carries no next-run
-      // time, so it says what it knows.
-      return "Waiting · in cool-down";
-    default:
-      return "—";
-  }
+  return flashed;
 }
 
 /* ------------------------------------------------------------------ */

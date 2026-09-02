@@ -30,6 +30,7 @@ import {
   type PolicyPack,
   type PolicyRevision,
 } from "@/lib/policies-data";
+import type { ComplianceBlock } from "@/lib/simulation-data";
 import { ContactBounds, MandateRules, QuietHours } from "./contact-bounds";
 import { Enforcement, PendingChanges, Revisions } from "./policy-ledger";
 import { Channels, EscalationGates, StoppingRules } from "./stopping-rules";
@@ -68,6 +69,8 @@ export function PoliciesView({
   firings,
   queue,
   ledgerEntries,
+  compliance,
+  seed,
   merchantName,
 }: {
   pack: PolicyPack;
@@ -78,6 +81,10 @@ export function PoliciesView({
   /** Requests currently waiting on a human, per gate id. */
   queue: Record<string, number>;
   ledgerEntries: number;
+  /** The promoted run's compliance block, or null when nothing is promoted. */
+  compliance: ComplianceBlock | null;
+  /** The promoted run's seed. Null when this data did not come from a run. */
+  seed: number | null;
   merchantName: string;
 }) {
   const [saved, setSaved] = useState<PolicyPack>(() => clonePack(initial));
@@ -213,13 +220,18 @@ export function PoliciesView({
     STOPPING_RULES.filter((rule) => rule.locked).length +
     ESCALATION_GATES.filter((gate) => gate.locked).length;
   const stops = Object.values(firings).reduce((sum, n) => sum + n, 0);
+  // A compliance assertion that did not hold is the definition of a violation
+  // here; the report evaluates each one against the run's own ledger rows.
+  const failedAssertions = compliance
+    ? compliance.assertions.filter((assertion) => !assertion.held).length
+    : 0;
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="mono text-[12px] text-txt-faint">
           policy {version} · {rulesOn + gatesOn} guardrails on · {lockedCount} locked ·{" "}
-          {revisions.length} revisions · seed 42
+          {revisions.length} revisions{seed !== null ? ` · seed ${seed}` : ""}
         </p>
 
         {dirty ? (
@@ -256,14 +268,26 @@ export function PoliciesView({
           value={<span className="tabular">{stops}</span>}
           support="actions deferred, cases closed or requests escalated by these rules"
         />
+        {/* Was the literal `0`, captioned with the live ledger's row count — a
+            verdict nobody computed, over a denominator that measured nothing.
+            The promoted run's compliance block is the only place this product
+            actually evaluates the claims, so it is the only place the figure
+            can honestly come from. */}
         <Figure
           label="Violations"
-          value={<span className="tabular">0</span>}
+          value={<span className="tabular">{compliance ? failedAssertions : "—"}</span>}
           support={
-            <span className="flex items-center gap-1.5">
-              <ShieldCheckSmallIcon className="h-[12px] w-[12px] text-recovered" />
-              recomputed from {ledgerEntries.toLocaleString("en-IN")} ledger entries
-            </span>
+            compliance ? (
+              <span className="flex items-center gap-1.5">
+                {failedAssertions === 0 ? (
+                  <ShieldCheckSmallIcon className="h-[12px] w-[12px] text-recovered" />
+                ) : null}
+                across {compliance.assertions.length} checks over the promoted run&rsquo;s{" "}
+                {compliance.entries.toLocaleString("en-IN")} ledger rows
+              </span>
+            ) : (
+              <span>no run promoted · this ledger holds {ledgerEntries.toLocaleString("en-IN")} rows</span>
+            )
           }
         />
       </section>

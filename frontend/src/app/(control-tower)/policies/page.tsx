@@ -64,6 +64,12 @@ export default async function PoliciesPage() {
       // ledger entirely — hence this page claiming 4,318 while the Audit
       // Explorer showed 1,885.
       ledgerEntries={ledgerEntries}
+      // The compliance block of the promoted run, so "Violations" is counted
+      // from assertions that were actually evaluated against ledger rows. It
+      // used to be the literal 0, captioned "recomputed from N ledger entries"
+      // over a denominator that had nothing to do with any check.
+      compliance={report?.report.compliance ?? null}
+      seed={report?.run.seed ?? null}
       merchantName={DEMO_MERCHANT.displayName}
     />
   );
