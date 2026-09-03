@@ -77,10 +77,14 @@ flowchart LR
 
 Deployment topology (as deployed): Control Tower on **Vercel** (root dir `frontend/`),
 API on **Render** via the repo's `render.yaml` Blueprint, Postgres on **Neon**, Redis on
-**Upstash**. Live at <https://tugboat-six.vercel.app/>. Auth crosses the two origins
-through a Next.js BFF proxy that sets the session cookie first-party on the Vercel
-domain; the realtime socket authenticates cross-site with a two-minute token minted
-server-side.
+**Upstash**. Live at <https://tugboat-six.vercel.app/>; the five-minute walkthrough is at
+<https://youtu.be/e0orCEB-_eE>. Auth crosses the two origins through a Next.js BFF proxy
+that sets the session cookie first-party on the Vercel domain; the realtime socket
+authenticates cross-site with a two-minute token minted server-side. A GitHub Actions
+workflow (`.github/workflows/keep-warm.yml`) pings `/healthz` every five minutes so the
+free instance keeps its scheduler running (§6). Twilio's webhooks — inbound WhatsApp,
+message status, the live-call turn loop — are registered by the adapters from
+`PUBLIC_API_URL` and verified by signature before anything is read.
 
 ## 3. The agent loop
 
@@ -108,7 +112,12 @@ Five injectable stages, separately testable, composed by the executor's queue:
 **Case state is a finite state machine.** One explicit transition table; illegal
 transitions throw. `recovered` is the only stage with no exits — and the machine may
 refuse anything *except* the money arriving: a payment landing on a case in any stage
-ends it as recovered. Every state change and the event describing it are written in one
+ends it as recovered. Two more doors are human-shaped: `exhausted → escalated` and
+`halted → escalated`, so a merchant can take a case the agent has finished with. The
+opt-out is guarded where it lives — the override service refuses to take a case whose
+customer said STOP, and the gate refuses every send to them — rather than by walling
+off a stage from its owner. A restart is a timestamp the gate counts from, not a
+deletion (§4). Every state change and the event describing it are written in one
 transaction — the timeline UI literally renders the event log, so there is no second
 source of truth to drift. Event sequence numbers are assigned optimistically and
 protected by a unique constraint, with the collision retry in a shared helper that every
@@ -134,8 +143,8 @@ Stopping rules, all configurable in the Policies UI, all measured in the evidenc
 | Rule | Bound | Note |
 |---|---|---|
 | Quiet hours | 21:00–09:00 IST, contact deferred to window open | TRAI DND-aligned; silent retries exempt; fixed IST arithmetic, no timezone library |
-| Attempt cap | 4 contacts per case (3 re-presentations for mandates) | only *executed* actions count against a bound; the case closes `exhausted` and the agent sends nothing more, though a merchant may still take it over themselves |
-| Cool-down | 20h between contacts | never two nudges in one afternoon |
+| Attempt cap | 4 contacts per case (3 re-presentations for mandates) | only *executed* actions count against a bound — a message the provider later reports as failed hands its attempt back, once per channel; the case closes `exhausted` and the agent sends nothing more, though a merchant may still take it over or restart it from the handover card |
+| Cool-down | 20h between contacts | never two nudges in one afternoon; the **one** bound a named human may waive, for a call they are placing themselves — recorded as `CALL_FORCED_BY_HUMAN` naming the waived check. Quiet hours and the opt-out are never on offer |
 | Per-channel cap | e.g. max 1 voice call | falls back to the next-cheapest channel |
 | Opt-out | STOP/UNSUBSCRIBE/Hindi equivalents → permanent halt, all channels | **cannot be disabled in the UI**; belongs to the customer, not the case — it survives across cases, days, and even a process crash (proven by accident when a test customer's weeks-old STOP halted a brand-new case) |
 | Sentiment halt | strongly negative reply → halt + escalate | |
@@ -155,6 +164,33 @@ ever made to an approved draft is substituting the case's real payment link, and
 removed opt-out line is restored rather than argued about. A redelivered release is
 skipped by reading the claim before consulting the gate, so replayed work cannot
 reschedule itself.
+
+**Five gates, and every escalation asks a question.** The four gates above ask *before*
+an action. The fifth, `escalated_to_human`, is asked after a case has already stopped
+with a person — taken from the Control Tower, escalated by the diagnoser under the
+confidence floor, or escalated by the executor for a reason no gate covers (a broken
+promise, a channel that would not deliver). Its card asks the plainest question in the
+product — *carry on, or stand down* — and has three answers: **yes** lifts the hold and
+sends the next written rung inside the same caps; **no** halts the case with the reason
+on the chain; **restart** approves and stamps `cases.restartedAt`, from which the gate
+counts every bound it derives from past sends (channel caps, cool-down, mandate
+re-presentations) — nothing is deleted, the timeline keeps every message, and an
+opt-out survives a restart. Lifting a hold is itself an act, so approving a handover
+writes `AGENT_RESUMED_BY_HUMAN` in the same transaction that clears `pausedAt`; an
+answered handover can be asked again when the case falls back to `escalated`, because a
+question a human already answered is live again the moment nobody is acting on it. The
+Approvals queue is therefore the complete list of what the agent is waiting on a person
+for — a property it did not have until a merchant using his own product found three of
+his cases sitting in `escalated` over an empty page.
+
+**"Ask Boa to call now" asks the gate first.** The dialog behind it is a dry run of the
+identical `evaluateGate` the Executor will run, listing every bound currently objecting
+and whether a human may spend it. A cool-down is offered as waivable — it exists to pace
+an *unattended* agent, and a merchant looking at one case is the judgement it stood in
+for. Everything else is shown as a refusal with no way through. On "Call anyway" the
+gate re-runs with an `override` naming the merchant; the cool-down step becomes a
+recorded `skip` rather than a dropped check, so the compliance log shows that the bound
+was evaluated, objected, and was overridden by a named person.
 
 ## 5. Data, audit, and idempotency
 
@@ -191,6 +227,19 @@ run. That last guard exists because testing proved the idempotency key alone sto
 duplicate *message* but not a duplicate *attempt* — a replayed job that re-plans sends
 under a legitimately different key, and only the attempt guard catches it.
 
+**Delivery is the provider's verdict, not the acknowledgement.** Twilio answers "queued"
+synchronously and decides later. The WhatsApp adapter registers a status callback, and a
+signature-verified webhook feeds the later verdict back: a `failed` or `undelivered`
+message marks its action `FAILED`, appends a `DELIVERY_FAILED` node — the send happened,
+the delivery did not, and both belong on an append-only timeline — and hands the attempt
+back to the case, once per channel, so a dead number cannot refund for ever. The refund
+also replaces the follow-up job, because that job carries the attempt count it was
+scheduled against and would otherwise wait behind a guard that can never match again.
+The callback is only registered when `PUBLIC_API_URL` is publicly reachable: Twilio
+rejects a message whose callback it could never reach (error 21609) *before* sending it,
+so on a laptop without a tunnel the callback that was added to record failed deliveries
+was, for one evening, the reason nothing was delivered.
+
 ## 6. Time is a first-class citizen
 
 Recovery is a scheduling problem: "retry when the bank recovers", "follow up at 09:00",
@@ -206,8 +255,15 @@ delayed jobs** — no polling loops. Three properties keep that honest:
   surfaced against production BullMQ's job locks.
 - **The scheduler needs a running host.** Render's free instance sleeps after 15 idle
   minutes and a sleeping instance runs no worker — the first live 09:00 WhatsApp went out
-  at 09:44 because nothing had woken the process. The mitigation is operational (an
-  external keep-warm ping) and documented in the README rather than hidden.
+  at 09:44 because nothing had woken the process since 01:45. The mitigation is
+  operational — `.github/workflows/keep-warm.yml` pings `/healthz` every five minutes —
+  and documented in the README rather than hidden; for a judging window an always-on
+  instance is the surer choice.
+- **A promise is scheduled from the customer's words.** The promise check-in fires on
+  the day the customer named on the call, with a twelve-hour floor so a promise for
+  tonight is not chased while the customer is still on the phone. Every deferral lands
+  on the same 09:00 boundary, which is why the executor checks for a call already in
+  progress to the same handset before dialling.
 
 For batches, simulated time is an async-context clock offset — not a global, not a
 stub — starting at a fixed instant so a seed reproduces. The characteristic failure of a
@@ -231,28 +287,38 @@ Specifics: one Razorpay payment link per case, issued by the first channel that 
 and reused by every later one; the "silent retry" is a live payment link whose capture
 arrives by webhook — a success that names a case *is* the recovery; test mode is enforced
 in code and no provider SDK is imported; every message ends with the opt-out line,
-asserted by 486 tests; WhatsApp replies from a real phone reach the case through Twilio's
-inbound webhook.
+asserted for every body the copy module can produce (102 of the 519 tests in
+`message-copy.spec.ts`); WhatsApp replies from a real phone reach the case through
+Twilio's inbound webhook, and Twilio's later verdict on an outbound message reaches it
+through the status webhook (§5).
 
 **The Hinglish voice call** is the most regulated action in the product, so it is layered:
 
 - *Simulated (default, and always for batches):* the dialogue engine converses with a
-  persona; the recording is real audio, rendered server-side by TTS and stitched into one
-  file, served through the Control Tower's own origin.
+  persona; the recording is real audio, rendered server-side by TTS (Edge neural voices
+  with no key, or Sarvam Bulbul v3 with one — v1 and v2 were retired under the product
+  inside a week, which is why the model id is one exported constant) and stitched into
+  one file, served through the Control Tower's own origin.
 - *Real (`CHANNEL_MODE_VOICE=real`):* Twilio dials, plays Boa's lines, listens in
   `hi-IN`, and the same dialogue engine answers turn by turn over webhooks until a date
   is agreed, hardship is declared, or the customer hangs up; the two-way recording and
-  transcript land on the case. "Ask Boa to call now" queues the rung — the gate still
-  decides. The live call has its own single-shape prompt, and the turn endpoint fails
+  transcript land on the case, and the customer's turns are what speech recognition
+  heard, garbles included. "Ask Boa to call now" queues the rung — the gate still
+  decides (§4). The live call has its own single-shape prompt, and the turn endpoint fails
   *politely in Hinglish* rather than letting the provider read an application error into
-  the customer's ear — a lesson from the first real call the product ever placed. A
-  guard defers a second call to the same phone within minutes of an active one, because
+  the customer's ear — a lesson from the first real call the product ever placed. The
+  promise date on the card is the day the customer actually named, resolved by the model
+  against a supplied `Today`, not the horizon the agent offered before dialling; and the
+  link Boa says she *is sending* is queued through the ordinary gated path the moment the
+  promise is recorded — so it can be deferred to 09:00, but it is never unfenced. A guard
+  defers a second call to the same phone within minutes of an active one, because
   quiet-hours deferrals all land on the same 09:00 boundary.
 
 ## 8. The LLM layer
 
 One driver interface, per-purpose routing, provider named nowhere in business logic. The
-live lane runs on Groq; the **default lane is a deterministic offline fake driver** — not
+live lane runs on Groq (a Gemini driver sits behind the same interface for the reasoning
+purposes when its key is present); the **default lane is a deterministic offline fake driver** — not
 a test double, a first-class lane — so the entire loop, batch, and report run at zero
 cost with no keys. Every output is schema-parsed with one repair attempt; an unreachable
 model is handled exactly like one that talks nonsense — a design that was proven live
@@ -309,18 +375,29 @@ Three tiers with different contracts:
 
 | Tier | Size | Contract |
 |---|---|---|
-| Unit + e2e (hermetic) | ~1,150 + 50 | No `.env`, no connections, nothing dials out. E2E substitutes an in-memory Prisma. |
-| Integration | dozens of suites | Real Neon + real Redis; concurrency races, redelivery, quiet hours, ledger triggers, batch reproducibility. |
+| Unit + e2e (hermetic) | 1,222 + 51 | No `.env`, no connections, nothing dials out. E2E substitutes an in-memory Prisma. |
+| Integration | 9 suites, 59 tests | Real Neon + real Redis; concurrency races, redelivery, quiet hours, ledger triggers, batch reproducibility. |
 | Live probes | scripted | Real channels and a real browser against the running system; several bugs only these found. |
 
-The browser tier earns its place. Two defects survived every layer below it because
-every layer below it was correct: the Case Detail override buttons did nothing when
-pressed in the second between paint and hydration — the route, the gate and the ledger
-all worked when called directly — and an `sr-only` label escaped a scroll container and
-dragged the whole document 1,247px wide on a phone. Both are now guarded by browser
-checks: one asserts a button is disabled before hydration and works on the first click
-after it; the other sweeps eight routes at three viewport widths asserting the document
-never exceeds the viewport.
+Two documentation guards run as code: `npm run check:decisions` verifies that every
+`Implemented at:` reference in the decision log points at code that exists, and a unit
+test fails on any decision or build-note number cited in a comment that has no entry —
+because a reference nobody checks is a comment, and a comment that cites nothing reads
+as authority.
+
+The browser tier earns its place. A whole family of defects survived every layer below
+it because every layer below it was correct: the Case Detail override buttons did
+nothing when pressed in the 1.35 seconds between paint and hydration — the route, the
+gate and the ledger all worked when called directly; an `sr-only` label escaped a scroll
+container and dragged the whole document 1,247px wide on a phone; the Simulation Lab's
+configuration panel existed and no phase of the page could reach it; a "Chain verified"
+badge on the Case Detail page was a 900 ms timer; and the page derived "on hold" from a
+ledger fold after one state change had stopped writing a row. The shared shape — *the
+interface asserts something the code beneath it does not do* — is now guarded three
+ways: browser checks (a button is disabled before hydration and works on the first
+click after it; eight routes at three viewport widths never exceed the viewport), a
+verification button that computes or does not exist, and override buttons that read
+the same two columns the API guards on.
 
 Two philosophies, learned the hard way and now enforced deliberately:
 
@@ -341,9 +418,13 @@ Two philosophies, learned the hard way and now enforced deliberately:
   transaction. Audit and replayability come free.
 - **ADR-3 — Explicit FSM; the LLM never transitions state.** One transition table,
   illegal transitions throw — with two refinements, both human or money shaped. Any
-  stage may end in `recovered` when the money arrives, and a case the agent
-  `exhausted` at its attempt cap may still be taken by a person (`exhausted →
-  escalated`). A case `halted` by an opt-out or a hostile reply may not.
+  stage may end in `recovered` when the money arrives, and a case the agent has
+  finished with — `exhausted` at its attempt cap, or `halted` — may still be taken by a
+  person (`→ escalated`). `halted` got that door late, once it was clear that a refused
+  delivery and a merchant's own "resolved elsewhere" land there beside opt-outs; the
+  opt-out itself is guarded at the override and at the gate, not by the stage. The
+  override checks the machine *before* writing the row that describes the move, because
+  a 200 that wrote "a human took this case" over an unmoved stage was the worse bug.
 - **ADR-4 — Five-stage pipeline as injectable services.** Each stage independently
   testable and independently explainable.
 - **ADR-5 — Deterministic-first diagnosis.** A versioned rules table answers known
@@ -352,7 +433,9 @@ Two philosophies, learned the hard way and now enforced deliberately:
   rather than guessed in the committed batch.
 - **ADR-6 — Single PolicyGate choke point.** Bounded-and-compliant is only provable with
   exactly one door out; strengthened with pure-function checks, always-full checklists,
-  and a compile-time gate-pass type.
+  and a compile-time gate-pass type. A human's requested call, the link promised on a
+  call, and a handover's release all travel through the same door; the one bound a
+  named human may waive is the cool-down, and the waiver is itself a ledger row.
 - **ADR-7 — Time as delayed jobs, with re-validation before action.** Plus a reconciler:
   the queue is a promise the database made.
 - **ADR-8 — Idempotency everywhere.** Leases instead of null checks; a staleness guard on
@@ -381,12 +464,52 @@ Two philosophies, learned the hard way and now enforced deliberately:
   argument for the architecture that confines it, and it is reported, not hidden.
 - **Residual nondeterminism** in reruns is limited to database identities; the
   reproducibility test normalizes them and asserts everything else is identical.
+- **Delivery verdicts need a public API.** On a laptop without a tunnel the WhatsApp
+  status callback is not registered, and the timeline keeps Twilio's optimistic
+  "queued" — honest about being unverified, but unverified.
+- **A restart narrows one number.** After "Restart the case", `attemptsUsed` counts the
+  current run rather than the customer's lifetime contact; the timeline and the ledger
+  keep every message ever sent, and the decision row names who reset the counters.
+- **Cases escalated before the handover gate existed have no card** until
+  `scripts/raise-missing-handovers.mjs` gives them one; the fix lets the question be
+  asked again, it does not ask it retroactively.
 
-## 13. Where to look next
+## 13. What broke at 2 AM, and how it was fixed
+
+The build log runs to ninety-two numbered entries — each with the first wrong theory,
+the actual cause, the fix and what guards it now — and the decision log to a hundred and
+sixty. These are the breakages that changed the architecture above, in the order they
+were found. Several were found at hours the timestamps admit to.
+
+| What broke | Actual cause | Fix, and what guards it now |
+|---|---|---|
+| **The production queue had never run a single step.** Six stages of green tests; the first sweep against real Redis threw `Custom Id cannot contain :`, and the executor's defer path failed on "locked by another worker". | BullMQ refuses custom ids with more than three colon-separated parts (`case:<id>:step:<n>` has four) and will not let a job cancel and re-queue its own id while it holds the lock. The in-memory queue quietly did the right thing for both. | The adapter spells ids for the wire and reads them back; a self-reschedule is applied on the job's `completed` event; a reconciler re-derives every owed job from the database; a supervisor replaces a worker that wedges after a broker outage. `queue.int-spec.ts` runs the executor's exact call sequence against real Redis. |
+| **The idempotency key stopped a duplicate message but not a duplicate attempt.** | A replayed job re-plans and sends the *next* rung under a legitimately different key. | Every queued step carries the attempt count it was scheduled against and refuses to run when stale (§5). |
+| **The simulated merchant never answered a single request** — twelve pending, zero decisions, no error. | `requestedAt` was `@default(now())` — the wall clock — under a virtual clock working ten days in the past; nothing was ever old enough to answer. | The runner stamps narrated time; every `@default(now())` on a row the agent writes was audited, and the one left alone (`Action.createdAt`, the lease) is documented as a question about real elapsed time. |
+| **A fifth of the batch was misdiagnosed by construction** — 72% accuracy that nobody questioned because it was unflattering. | The generator's "ambiguous" codes carried `GATEWAY_ERROR`, which the rules table reads confidently; the agent was marked down for the harness's mistake. | `population.spec.ts` runs the real `applyRules` over every generated code and asserts the lane labels are true. |
+| **Three simulator defects moved the headline** from 36.4% to 46.6%. | A baseline the executed arm could not match by construction; a frozen-clock watermark that discarded every simulated reply; opt-outs leaking between runs of one seed. | The executed arm honours `wouldSelfRecover`; the watermark follows the tick; contacts are run-scoped while the persona's seed is not. The earlier figures are kept beside the new ones. |
+| **Bugs that only existed at night.** Twenty-nine integration tests failed after 21:00; the activity feed stamped 00:00–01:00 as `24:xx:xx`. | The gate was correctly deferring every send into quiet hours; `hour12: false` under `en-IN` resolves to the h24 cycle. | The integration tier pins itself to daytime; `hourCycle: "h23"` names the cycle that has a zero. |
+| **Every Control Tower figure summed every batch ever run** — 1,528 cases at 19% against 214 at 36%. | Operational queries had no scope; the mock layer had never needed one. | One `where` fragment — live cases plus the promoted batch — spelled once and used everywhere; the ledger is deliberately not scoped. |
+| **A batch on the deployed API would have sent 214 synthetic customers through Resend, Twilio and Razorpay,** and promoting it would have deleted the owner's real cases. | Adapters were chosen once at boot by lane; `NOT { simRunId }` matches null. Both found by reading, not running. | `adapterFor` picks by the case's `simRunId`; promotion clears rows with `simRunId: { not: null }` only. |
+| **The Razorpay lane said "real" and issued the simulated link.** | A union type in a constructor compiles to `Object`; Nest injected `null` without a word and `mode` fell back to simulated under a real label. | `@Inject(RazorpayClient)` names the token; the spec resolves the service through the real injector and asserts `mode === "real"`. |
+| **Providers retired models overnight, three times.** Groq removed the default Llama model; Sarvam retired `bulbul:v1`, then `v2` and its voices. | A provider's vocabulary is not ours to pin. | Model ids are config with one exported constant each; an unreachable model escalates the case (proven live, §8); a TTS failure costs a recording, never a case. |
+| **The 09:00 WhatsApp went out at 09:44.** | Render's free instance sleeps after fifteen idle minutes and a sleeping instance runs no scheduler; the last request had been at 01:45. | `.github/workflows/keep-warm.yml` pings `/healthz` every five minutes; the README states the free tier's cost (§6). |
+| **The first two real calls dialled one phone twice in the same second.** | Every quiet-hours deferral lands on 09:00:00; the gate's caps are per case, the phone is per person. | One query for a call already in progress to that number; the second rung waits ninety seconds. |
+| **The first answered real call ended with Twilio reading "an application error has occurred".** | The model answered the live turn in the *scripted* dialogue's JSON shape because one shared prompt showed two schemas; the turn webhook let the parse failure become a 500. | The live call has its own single-shape prompt; the turn endpoint closes the call politely in Hinglish, records the transcript and logs the cause (§7). |
+| **"The button does nothing" — five reports, five causes.** | A click in the 1.35 s before hydration; a transition silently skipped after the ledger row was written, with a 200; an unreachable configure phase; a "Chain verified" badge on a 900 ms timer; a hold derived from a fold that one code path had stopped feeding. | Controls render disabled until hydrated; the machine is checked before the row is written; the dead button became a link to the next action; the panel recomputes every digest; the buttons read the two columns the API guards on (§10). |
+| **Boa promised a WhatsApp she never sent, filed a date nobody agreed to, and the timeline said "delivered" for messages Twilio had been failing for days.** | `promiseDate = now + 3 days` computed before the call; a script line nothing honoured; Twilio's synchronous "queued" recorded as delivery, with the dead send burning an attempt. | `promise_date` from the customer's words against a supplied `Today`; the promised link queued through the gate; a status callback feeds Twilio's verdict back and hands the attempt back once per channel (§5, §7). |
+| **One missing backslash threw away every promise on every call.** | `/^d{4}-d{2}-d{2}$/` matches `dddd-dd-dd`; the schema refused every real date and the graceful close read "line mein kuch dikkat" to a customer who had just agreed to pay. | The escapes, and eleven tests that send real ISO dates through the schema. A regex is a program with no compiler and no test unless you write one. |
+| **The Approvals queue was empty while the merchant's own cases waited on him.** | Escalations with no gate raised no card, by a design measured against batch traffic where the gap was a rounding error. | The fifth gate; every path into `escalated` raises a card; an answered handover can be asked again; `raise-missing-handovers.mjs` backfills the rest (§4). |
+| **The WhatsApp status callback killed the message on a laptop with no tunnel.** | Twilio validates `StatusCallback` when it accepts the message and refuses one it could never reach (error 21609). | The callback is registered only when `PUBLIC_API_URL` is publicly reachable; otherwise the message goes out and the status stays honestly at "queued" (§5). |
+
+## 14. Where to look next
 
 | | |
 |---|---|
 | [evidence/README.md](evidence/README.md) | What the committed numbers describe, and how to reproduce them |
+| <https://youtu.be/e0orCEB-_eE> | The five-minute walkthrough of the deployed product |
 | [../frontend/README.md](../frontend/README.md) | The Control Tower, page by page |
 | [../backend/.env.example](../backend/.env.example) | Every variable, every lane, what switching it on changes |
 | [../render.yaml](../render.yaml) | The deployment, as a Blueprint |
+| [../.github/workflows/keep-warm.yml](../.github/workflows/keep-warm.yml) | What keeps the free instance's scheduler awake |
+| [../scripts/](../scripts/) | `demo.mjs`, `seed-live-case.mjs`, `raise-missing-handovers.mjs`, `check-decisions.mjs`, `evidence-pdf.mjs` |

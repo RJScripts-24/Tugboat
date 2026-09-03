@@ -57,6 +57,8 @@ export class EdgeTtsSynthesizer implements TtsSynthesizer {
 }
 
 export const SARVAM_TTS_API = "https://api.sarvam.ai/text-to-speech";
+export const SARVAM_MODEL = "bulbul:v3";
+export const SARVAM_SPEAKERS = { BOA: "priya", CUSTOMER: "rahul" } as const;
 
 /**
  * Sarvam's Bulbul, the Indic-first option when a key is present.
@@ -80,8 +82,12 @@ export class SarvamTtsSynthesizer implements TtsSynthesizer {
       body: JSON.stringify({
         inputs: [text],
         target_language_code: language === "hi-IN" ? "hi-IN" : "en-IN",
-        speaker: speaker === "BOA" ? "anushka" : "abhilash",
-        model: "bulbul:v2",
+        // bulbul:v2 was retired by Sarvam on 2026-09-03 with a 400 on every
+        // call, and its speakers do not exist on v3 — the service names the
+        // v3 roster in that error. Priya and Rahul are the v3 voices closest
+        // to the pair that shipped (B-92).
+        speaker: speaker === "BOA" ? SARVAM_SPEAKERS.BOA : SARVAM_SPEAKERS.CUSTOMER,
+        model: SARVAM_MODEL,
         speech_sample_rate: 22050,
       }),
     });
