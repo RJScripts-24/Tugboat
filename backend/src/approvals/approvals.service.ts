@@ -184,7 +184,43 @@ export class ApprovalsService {
       throw new BadRequestException({ error: message, message });
     }
 
-    const idempotencyKey = `case:${record.id}:approval:${input.gate}:${record.attemptsUsed}`;
+    /*
+     * A handover already answered is history, not a reason to stay silent.
+     *
+     * The key was `case:<id>:approval:<gate>:<attempt>` and the guard below
+     * returned any approval it found — decided or not. For the four gates that
+     * ask about a *specific action* that is right: a rejected discount should
+     * not be re-asked on the next tick. For `escalated_to_human` it is wrong,
+     * and it stranded cases permanently (B-87). A handover asks "carry on or
+     * stand down". When the answer was carry on and the send then failed, the
+     * case is back where it started — still escalated, nobody acting — and the
+     * question is live again. Because the answered row held the only key that
+     * attempt could produce, it could never be asked twice, so the case sat in
+     * `escalated` with an empty queue for the rest of its life. C-4591 and
+     * C-5406 had both been answered once and were unreachable ever after.
+     */
+    const rounds =
+      input.gate === "escalated_to_human"
+        ? await this.prisma.approval.count({
+            where: { caseId: record.id, gate: input.gate },
+          })
+        : 0;
+
+    const baseKey = `case:${record.id}:approval:${input.gate}:${record.attemptsUsed}`;
+    const idempotencyKey = rounds === 0 ? baseKey : `${baseKey}:r${rounds}`;
+
+    // An open request is never asked twice, whatever the gate. This is the half
+    // of the old guard that was always correct.
+    const open = await this.prisma.approval.findFirst({
+      where: { caseId: record.id, gate: input.gate, decision: null },
+    });
+
+    if (open) {
+      this.logger.log(
+        `${toCaseRef(record.id)} already has an open ${input.gate} request`,
+      );
+      return { ...open, case: record };
+    }
 
     const existing = await this.prisma.action.findUnique({
       where: { idempotencyKey },
