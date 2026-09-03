@@ -5,6 +5,7 @@ import { FakeLlmDriver } from "./fake-llm.driver";
 import { LLM_DRIVER } from "./llm-driver.interface";
 import { LlmService } from "./llm.service";
 import { VoiceDialogueError, VoiceDialogueService, type DialogueContext } from "./voice-dialogue.service";
+import { liveTurnSchema } from "./schemas";
 
 describe("the voice dialogue engine", () => {
   let dialogue: VoiceDialogueService;
@@ -156,5 +157,58 @@ describe("the voice dialogue engine", () => {
 
     expect(second.transcript).toEqual(first.transcript);
     expect(second.seconds).toBe(first.seconds);
+  });
+});
+
+/**
+ * B-83 — the promise-date pattern matched no date at all.
+ *
+ * `/^d{4}-d{2}-d{2}$/` is missing its escapes: it matches the literal string
+ * "dddd-dd-dd" and rejects "2026-09-03". Every live call in which the customer
+ * named a day therefore failed `liveTurnSchema`, threw out of `liveTurn`, and
+ * ended with the controller reading the "line mein kuch dikkat" close to
+ * somebody who had just agreed to pay. The two real calls that found it are on
+ * cases C-5408 and C-5411.
+ *
+ * Tested through the schema rather than the service because the schema is where
+ * the defect was, and a regex is exactly the kind of thing that looks right.
+ */
+describe("liveTurnSchema — the promise date (B-83)", () => {
+  const turn = (promise_date: unknown) => ({
+    say: "Theek hai, main aapko link bhej deti hoon.",
+    end_call: true,
+    intent: "PROMISED_TO_PAY" as const,
+    promise_date,
+  });
+
+  it("accepts an ISO date, which is what the model returns", () => {
+    const result = liveTurnSchema.safeParse(turn("2026-09-03"));
+    expect(result.success).toBe(true);
+  });
+
+  it.each(["2026-01-01", "2026-12-31", "2027-06-15"])("accepts %s", (date) => {
+    expect(liveTurnSchema.safeParse(turn(date)).success).toBe(true);
+  });
+
+  it("rejects the literal string the broken pattern used to accept", () => {
+    expect(liveTurnSchema.safeParse(turn("dddd-dd-dd")).success).toBe(false);
+  });
+
+  it.each(["03-09-2026", "2026/09/03", "tonight", "aaj raat", ""])(
+    "rejects %s",
+    (value) => {
+      expect(liveTurnSchema.safeParse(turn(value)).success).toBe(false);
+    },
+  );
+
+  it("still allows no date at all, so a schema failure never hangs up on a customer", () => {
+    expect(liveTurnSchema.safeParse(turn(null)).success).toBe(true);
+    expect(
+      liveTurnSchema.safeParse({
+        say: "Dhanyavaad.",
+        end_call: true,
+        intent: "UNDECIDED" as const,
+      }).success,
+    ).toBe(true);
   });
 });

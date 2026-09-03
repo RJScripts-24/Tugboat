@@ -96,7 +96,11 @@ export const liveTurnSchema = z
      */
     promise_date: z
       .string()
-      .regex(/^d{4}-d{2}-d{2}$/)
+      // `\d`, not `d`. Without the escapes this matched the literal string
+      // "dddd-dd-dd" and rejected every real date, so a customer who named one
+      // failed the schema, the turn threw, and Boa read the polite line about a
+      // bad connection to somebody who had just agreed to pay (B-83).
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
       .nullable()
       .optional(),
   })
