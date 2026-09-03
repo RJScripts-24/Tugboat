@@ -809,25 +809,37 @@ export class ApprovalsService {
     if (!fresh || fresh.stage === "recovered") return;
     if (fresh.stage === "halted" || fresh.stage === "exhausted") return;
 
-    await this.cases.transition(row.caseId, "halted", {
-      kind: "HALTED",
-      title: "Contact halted",
-      summary: `${by} declined the escalation · ${reason}`,
-      badge: { label: "HALTED", tone: "halted" },
-      body: {
-        type: "facts",
-        rows: [
-          { label: "Outcome", value: "HALTED", mono: true, tone: "halted" },
-          { label: "Declined by", value: by },
-          { label: "Reason", value: reason },
-          { label: "Gate", value: row.gate, mono: true },
-          {
-            label: "Further contact",
-            value: "None — the agent was refused permission, not merely deferred",
-          },
-        ],
-      } as unknown as Prisma.InputJsonValue,
-    });
+    // `pausedAt` goes with the close. Taking a case sets the hold, and declining
+    // the handover halts it — but only the decision was written, so the case
+    // sat halted *and* paused, and Case Detail offered "Resume agent" on it. The
+    // click cleared a flag nothing was reading and changed nothing a merchant
+    // could see (B-89). A halted case is closed to the agent whatever the flag
+    // says; the way back is "Escalate to me" and a handover approved with a
+    // restart (D-157), and the page now says so instead of offering a resume.
+    await this.cases.transition(
+      row.caseId,
+      "halted",
+      {
+        kind: "HALTED",
+        title: "Contact halted",
+        summary: `${by} declined the escalation · ${reason}`,
+        badge: { label: "HALTED", tone: "halted" },
+        body: {
+          type: "facts",
+          rows: [
+            { label: "Outcome", value: "HALTED", mono: true, tone: "halted" },
+            { label: "Declined by", value: by },
+            { label: "Reason", value: reason },
+            { label: "Gate", value: row.gate, mono: true },
+            {
+              label: "Further contact",
+              value: "None — the agent was refused permission, not merely deferred",
+            },
+          ],
+        } as unknown as Prisma.InputJsonValue,
+      },
+      { pausedAt: null },
+    );
   }
 
   /* ---------------------------------------------------------------- */

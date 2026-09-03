@@ -69,6 +69,14 @@ export type PipelineCase = {
    */
   updatedMinutesAgo: number;
   recoveredPaise: number;
+  /**
+   * Requests on this case still waiting for an answer, from `GET /cases`.
+   *
+   * The Approvals queue and the status badge are two readings of one fact, and
+   * only the stage was ever on the wire, so they could disagree. See
+   * `stageBadgeOf` for what the badge does with it.
+   */
+  openApprovals: number;
 };
 
 /* ------------------------------------------------------------------ */
@@ -98,6 +106,35 @@ export const STAGE_META: Record<
   halted: { label: "Halted", tone: "halted", group: "closed" },
   exhausted: { label: "Exhausted", tone: "neutral", group: "closed" },
 };
+
+/**
+ * The status a row actually shows, which is not always its stage's label.
+ *
+ * "Escalated" is a claim about the Approvals queue: it tells an operator there
+ * is a card with their name on it one page away. The stage alone cannot back
+ * that claim, because `escalated` is where a case *stays* until something moves
+ * it, and plenty of things end a request without ending the stage — the answer
+ * is given and the release then fails to send, a promise is broken, a reply
+ * comes back angry. Each of those leaves a case genuinely with a human and no
+ * open question, and the badge went on saying "Escalated" over an Approvals
+ * page holding nothing (B-88). Reading the queue's own column is what stops one
+ * surface contradicting the other.
+ *
+ * A case in that state is not demoted to "being worked": it reads "With you",
+ * which is the same word Case Detail has always used for it, in the neutral
+ * chalk rather than the amber that means somebody is being waited on.
+ */
+export function stageBadgeOf(record: Pick<PipelineCase, "stage" | "openApprovals">): {
+  label: string;
+  tone: Tone;
+  pulsing?: boolean;
+} {
+  if (record.stage === "escalated" && record.openApprovals === 0) {
+    return { label: "With you", tone: "neutral" };
+  }
+
+  return STAGE_META[record.stage];
+}
 
 /** Filter order: in flight first, outcomes last - the order an operator triages. */
 export const STAGE_ORDER: Stage[] = [

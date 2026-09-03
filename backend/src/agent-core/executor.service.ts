@@ -1241,28 +1241,36 @@ export class ExecutorService {
     stage: "halted" | "exhausted",
     reason: string,
   ): Promise<StepOutcome> {
-    await this.cases.transition(record.id, stage, {
-      kind: "HALTED",
-      title: stage === "halted" ? "Contact halted" : "Case exhausted",
-      summary: reason,
-      badge: { label: stage.toUpperCase(), tone: "halted" },
-      body: {
-        type: "facts",
-        rows: [
-          { label: "Outcome", value: stage.toUpperCase(), mono: true, tone: "halted" },
-          { label: "Reason", value: reason },
-          {
-            label: "Attempts used",
-            value: `${record.attemptsUsed} of ${record.attemptCap}`,
-            mono: true,
-          },
-          {
-            label: "Further contact",
-            value: "None — the bound that closed this case is a stopping rule",
-          },
-        ],
-      } as unknown as Prisma.InputJsonValue,
-    });
+    // The hold goes with the close: a paused case that then halts or exhausts
+    // is closed to the agent whatever the flag says, and leaving it set only
+    // made Case Detail offer a "Resume agent" that changed nothing (B-89).
+    await this.cases.transition(
+      record.id,
+      stage,
+      {
+        kind: "HALTED",
+        title: stage === "halted" ? "Contact halted" : "Case exhausted",
+        summary: reason,
+        badge: { label: stage.toUpperCase(), tone: "halted" },
+        body: {
+          type: "facts",
+          rows: [
+            { label: "Outcome", value: stage.toUpperCase(), mono: true, tone: "halted" },
+            { label: "Reason", value: reason },
+            {
+              label: "Attempts used",
+              value: `${record.attemptsUsed} of ${record.attemptCap}`,
+              mono: true,
+            },
+            {
+              label: "Further contact",
+              value: "None — the bound that closed this case is a stopping rule",
+            },
+          ],
+        } as unknown as Prisma.InputJsonValue,
+      },
+      { pausedAt: null },
+    );
 
     return { kind: "closed", stage, reason };
   }

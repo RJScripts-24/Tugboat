@@ -76,11 +76,27 @@ export type PipelineCase = {
   attemptCap: number;
   updatedMinutesAgo: number;
   recoveredPaise: number;
+  /**
+   * Requests on this case still waiting for an answer.
+   *
+   * On the wire because the status badge is a claim about the queue, not only
+   * about the stage. A case sits in `escalated` from the moment the agent
+   * stands down until something moves it, and that span is longer than the one
+   * its card is open for: the request is answered, the release then fails, and
+   * the row goes on reading "Escalated" over an empty Approvals page (B-88).
+   * The badge reads the same table the queue reads, so the two surfaces cannot
+   * disagree about whether a question is outstanding.
+   */
+  openApprovals: number;
 };
 
 export function toPipelineCase(
   record: Case & { customer: Customer; approvals?: { id: string }[] },
 ): PipelineCase {
+  // `CASE_INCLUDE` filters this relation to `decision: null`, so its length is
+  // the number of *open* requests rather than the number ever raised.
+  const openApprovals = record.approvals?.length ?? 0;
+
   return {
     id: toCaseRef(record.id),
     type: record.type,
@@ -93,11 +109,12 @@ export function toPipelineCase(
     confidence: record.diagnosisConfidence,
     method: record.diagnosisMethod,
     stage: record.stage,
-    nextAction: nextActionLabel(record, record.approvals?.length ?? 0),
+    nextAction: nextActionLabel(record, openApprovals),
     attempts: record.attemptsUsed,
     attemptCap: record.attemptCap,
     updatedMinutesAgo: minutesAgo(record.updatedAt),
     recoveredPaise: record.recoveredAmountPaise,
+    openApprovals,
   };
 }
 

@@ -15,8 +15,8 @@ import {
 import { MoneyValue, StatusMark } from "@/components/dashboard/primitives";
 import {
   CASE_TYPE_META,
-  STAGE_META,
   formatAge,
+  stageBadgeOf,
   type CaseType,
   type PipelineCase,
 } from "@/lib/pipeline-data";
@@ -95,7 +95,7 @@ export function PipelineTable({
 
         <tbody>
           {rows.map((row) => {
-            const stage = STAGE_META[row.stage];
+            const stage = stageBadgeOf(row);
             const Icon = TYPE_ICON[row.type];
             const capped = row.attempts >= row.attemptCap;
             const low = row.confidence !== null && row.confidence < 0.6;

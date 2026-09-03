@@ -73,6 +73,7 @@ export function CaseLedger({
         onOverride={onOverride}
         onRequestCall={onRequestCall}
         stage={detail.record.stage}
+        openApprovals={detail.record.openApprovals}
         paused={paused}
         attempts={detail.record.attempts}
         attemptCap={detail.record.attemptCap}
@@ -117,6 +118,17 @@ function OutcomeCard({
   const takenByHuman = record.stage === "escalated";
 
   /*
+   * Held by a human *and* actually asked something.
+   *
+   * The two are not the same, which is what the link below got wrong. A case
+   * stays `escalated` after its request is answered — the release can fail, a
+   * promise can break, a reply can come back angry — so "waiting in the
+   * approvals queue" was printed over a queue that held nothing, on the one
+   * page whose job is to be the truthful account of a case (B-88).
+   */
+  const askedOfYou = takenByHuman && record.openApprovals > 0;
+
+  /*
    * An override changes the outcome, not just the note underneath it.
    *
    * The card used to render the seeded stage whatever had happened, so a case
@@ -142,8 +154,10 @@ function OutcomeCard({
 
   const detailLine = state.resolvedExternally
     ? "Closed by a human, not by the agent. Nothing further will be attempted and no money is counted as recovered here."
-    : takenByHuman
+    : askedOfYou
       ? "Boa has stood down. The case is yours until you release it."
+      : takenByHuman
+      ? "Boa has stood down and there is no open request. The case is yours until you release it."
       : paused
         ? "Boa is stood down on this case. Scheduled work will not run until you resume it."
         : outcome.detail;
@@ -194,7 +208,12 @@ function OutcomeCard({
       </dl>
 
       {state.last ? (
-        <OverrideNote last={state.last} appended={state.appended} stillHeld={takenByHuman} />
+        <OverrideNote
+          last={state.last}
+          appended={state.appended}
+          stillHeld={takenByHuman}
+          askedOfYou={askedOfYou}
+        />
       ) : null}
 
       {/* Whoever put it there. Taking a case used to hide this link — the note
@@ -202,7 +221,7 @@ function OutcomeCard({
           on the one page where the question "so what happens now?" is asked
           (D-151). Every escalated case has a card now, so every escalated case
           gets the link. */}
-      {record.stage === "escalated" ? (
+      {askedOfYou ? (
         <Link href="/approvals" className="disclose mt-3.5">
           {state.last === "escalate"
             ? "Answer it in the approvals queue →"
@@ -226,18 +245,23 @@ function OverrideNote({
   last,
   appended,
   stillHeld,
+  askedOfYou,
 }: {
   last: OverrideKind;
   appended: number;
   /** The case is escalated *now*, not merely was. */
   stillHeld: boolean;
+  /** And there is a card in the queue about it — the narrower of the two (B-88). */
+  askedOfYou: boolean;
 }) {
   const copy = {
     pause: "You paused Boa on this case. Nothing further will be sent until it is resumed.",
     resume: "You resumed Boa. The pause is still on the ledger — it was appended over, not undone.",
-    escalate: stillHeld
+    escalate: askedOfYou
       ? "You took this case. Boa has stood down, and the approvals queue is now asking you whether it should carry on or close the case."
-      : "You took this case and it has since been handed back to Boa. The row is still on the ledger — appended over, not undone.",
+      : stillHeld
+        ? "You took this case. Boa has stood down and the request has been answered, so nothing is waiting in the queue — the case is yours until you release it."
+        : "You took this case and it has since been handed back to Boa. The row is still on the ledger — appended over, not undone.",
     resolve: "Marked resolved outside Tugboat. The case is closed and no action will follow.",
     call: "You asked Boa to call. The gate answers first — quiet hours, opt-out and the one-call cap — and the call goes out at the next moment it allows.",
   }[last];
@@ -510,6 +534,7 @@ function Overrides({
   onOverride,
   onRequestCall,
   stage,
+  openApprovals,
   paused,
   attempts,
   attemptCap,
@@ -519,6 +544,8 @@ function Overrides({
   onOverride: (kind: OverrideKind) => void;
   onRequestCall: () => void;
   stage: string;
+  /** Requests still open on this case — see `alreadyYours` (B-88). */
+  openApprovals: number;
   paused: boolean;
   attempts: number;
   attemptCap: number;
@@ -563,11 +590,15 @@ function Overrides({
    * "Escalate to me" disables itself once the chain shows the case is yours,
    * which is correct and reads exactly like the failure it is not: the click
    * does nothing, the tooltip needs a hover to find, and the case is in fact
-   * waiting for you one page away. Every escalated case now has a card
-   * (D-151), so where the button would be dead there is somewhere to go
-   * instead.
+   * waiting for you one page away. Where the button would be dead there is
+   * somewhere to go instead.
+   *
+   * Only when the card is genuinely open, though. An escalated case whose
+   * request has been answered — a release that failed to send, a promise that
+   * broke — has nowhere for this link to lead, and sending somebody to an empty
+   * queue is the same broken promise the link was written to remove (B-88).
    */
-  const alreadyYours = stage === "escalated" && !done;
+  const alreadyYours = stage === "escalated" && !done && openApprovals > 0;
 
   /*
    * A case with no attempts left has nothing to call with (B-82).
@@ -602,14 +633,20 @@ function Overrides({
           type="button"
           onClick={() => onOverride(paused ? "resume" : "pause")}
           className="btn-op-quiet"
-          // A paused case can always be handed back, whatever stage it reached
-          // while it was paused (B-86). Disabling this on a closed case left a
-          // merchant who had paused a case that then halted with no way to
-          // resume it — the API would have accepted the call the whole time.
-          disabled={waiting || done || (closed && !paused)}
+          // Off on a closed case, paused or not. B-86 kept "Resume agent" live
+          // on a paused case that had since halted so the hold could be
+          // cleared — but clearing it moved nothing, because the machine has no
+          // way out of `halted` or `exhausted` except a human taking the case,
+          // and the click read as a resume that did nothing (B-89). Closes now
+          // drop the hold themselves, and the way back is named below.
+          disabled={waiting || done || closed}
           title={reason(
             closed || done,
-            done ? "This case was closed outside Tugboat" : closedWhy,
+            done
+              ? "This case was closed outside Tugboat"
+              : stage === "recovered"
+                ? closedWhy
+                : `${closedWhy}. The agent is closed to it — use "Escalate to me" and approve the handover with a restart to reopen it`,
           )}
         >
           <PauseIcon className="h-[11px] w-[11px]" />
@@ -632,7 +669,7 @@ function Overrides({
               done
                 ? "This case was closed outside Tugboat"
                 : stage === "escalated"
-                  ? "You already have this case"
+                  ? "You already have this case · no request is open on it"
                   : closedWhy,
             )}
           >

@@ -6,6 +6,7 @@ import type { ActivityEntry } from "../common/domain-event";
 import { toActivityEntry } from "../cases/case-activity";
 import { narratedCases } from "../cases/narrated";
 import { ClockService } from "../common/clock.service";
+import { fromIst, istParts } from "../policy/ist-clock";
 import { PolicyService } from "../policy/policy.service";
 import { PrismaService } from "../prisma/prisma.service";
 import type {
@@ -345,7 +346,14 @@ export class DashboardService {
   }
 
   async shellStatus(merchantId: string): Promise<ShellStatus> {
-    const since = new Date(this.clock.nowMs() - 86_400_000);
+    // Midnight IST, not "the last 24 hours". The label says today, and a
+    // payment captured at 19:30 yesterday evening was still being counted as
+    // today's money at 18:30 this evening — a figure a merchant knows is wrong
+    // the moment they read it, on the one number the shell shows on every page
+    // (B-89). India has no daylight saving, so the day boundary is exact
+    // arithmetic on the narrated clock rather than a timezone lookup.
+    const { year, month, day } = istParts(this.clock.now());
+    const since = fromIst(year, month, day, 0);
 
     const [today, active, policy, run] = await Promise.all([
       this.prisma.case.aggregate({

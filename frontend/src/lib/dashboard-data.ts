@@ -17,7 +17,7 @@
  * in the UI ever does arithmetic on a formatted string.
  */
 
-import { CASE_TYPE_META, STAGE_META, type PipelineCase } from "./pipeline-data";
+import { CASE_TYPE_META, stageBadgeOf, type PipelineCase } from "./pipeline-data";
 
 /**
  * Five tones, each carrying a meaning. There is no sixth for decoration:
@@ -131,7 +131,9 @@ export type CaseRow = {
  * the other reads.
  */
 export function toCaseRow(record: PipelineCase): CaseRow {
-  const stage = STAGE_META[record.stage];
+  // The badge, not the stage's label: an escalated case whose request has been
+  // answered reads "With you" rather than pointing at an empty queue (B-88).
+  const stage = stageBadgeOf(record);
 
   return {
     id: record.id,

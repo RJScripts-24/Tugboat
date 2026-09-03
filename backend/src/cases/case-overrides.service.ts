@@ -95,6 +95,16 @@ export class CaseOverridesService {
       throw new BadRequestException({ error: `${toCaseRef(caseId)} is not paused.` });
     }
 
+    // A closed case has nothing to resume into. The flag would clear and the
+    // stage would not move — the machine allows no way out of `halted` or
+    // `exhausted` except a human taking the case — so the click read as a
+    // resume that did nothing (B-89). Closes now drop the hold themselves; this
+    // catches a row closed before they did, and names the way back.
+    if (kind === "resume" && (record.stage === "halted" || record.stage === "exhausted")) {
+      const message = `${toCaseRef(caseId)} is ${record.stage} — the agent is closed to it. Use "Escalate to me", then approve the handover with "work it again from the start" to reopen the case.`;
+      throw new BadRequestException({ error: message, message });
+    }
+
     if (kind === "pause" && record.pausedAt !== null) {
       throw new BadRequestException({ error: `${toCaseRef(caseId)} is already paused.` });
     }

@@ -16,7 +16,7 @@ import {
   CASE_TYPE_META,
   CHANNEL_META,
   ROOT_CAUSE_META,
-  STAGE_META,
+  stageBadgeOf,
   type CaseDetail,
   type CaseType,
 } from "@/lib/case-detail-data";
@@ -50,7 +50,7 @@ export function CaseFacts({
   extraChannel: string | null;
 }) {
   const { record, customer, origin } = detail;
-  const stage = STAGE_META[record.stage];
+  const stage = stageBadgeOf(record);
   const cause = ROOT_CAUSE_META[record.rootCause];
   const Icon = TYPE_ICON[record.type];
   const opened = stampOf(detail.openedMinutesAgo);

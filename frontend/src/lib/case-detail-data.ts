@@ -24,6 +24,7 @@ import {
   CASE_TYPE_META,
   ROOT_CAUSE_META,
   STAGE_META,
+  stageBadgeOf,
   type CaseType,
   type PipelineCase,
   type RootCause,
@@ -227,5 +228,5 @@ export type CaseDetailWithNeighbours = CaseDetail & {
   batchSize: number;
 };
 
-export { CASE_TYPE_META, ROOT_CAUSE_META, STAGE_META };
+export { CASE_TYPE_META, ROOT_CAUSE_META, STAGE_META, stageBadgeOf };
 export type { CaseType, PipelineCase, RootCause, Stage };
