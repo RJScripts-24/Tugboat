@@ -160,7 +160,9 @@ function OutcomeCard({
       ? "Boa has stood down and there is no open request. The case is yours until you release it."
       : paused
         ? "Boa is stood down on this case. Scheduled work will not run until you resume it."
-        : outcome.detail;
+        : record.stage === "halted" || record.stage === "exhausted"
+          ? `${outcome.detail}. The case is closed to Boa — to hand it back, use "Escalate to me" and approve the handover with "work it again from the start".`
+          : outcome.detail;
 
   return (
     <Section title="Outcome" meta={stageLabel} bodyClassName="px-5 py-4">
@@ -582,7 +584,14 @@ function Overrides({
    * halted case whose customer replied STOP — and says so, which is a better
    * answer than a button that was never offered.
    */
-  const canEscalate = !done && stage !== "escalated" && stage !== "recovered";
+  //
+  // An escalated case is only off-limits while its card is open. One whose
+  // request has been answered and then re-escalated — a release that failed,
+  // a broken promise — is with a human and has no card, and "Escalate to me"
+  // is the one control that can raise one. Disabling it there left the case
+  // unreachable from every surface (B-90).
+  const canEscalate =
+    !done && stage !== "recovered" && !(stage === "escalated" && openApprovals > 0);
 
   /*
    * A case you already took is not a dead button, it is a link (B-80).
@@ -669,7 +678,7 @@ function Overrides({
               done
                 ? "This case was closed outside Tugboat"
                 : stage === "escalated"
-                  ? "You already have this case · no request is open on it"
+                  ? "You already have this case — answer it in Approvals"
                   : closedWhy,
             )}
           >
