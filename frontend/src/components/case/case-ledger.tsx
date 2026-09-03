@@ -546,10 +546,16 @@ function Overrides({
    * The agent is finished with it either way — nothing reschedules, and the
    * gate still counts attempts against the pack — but "the agent gave up" and
    * "nobody can pick this up" are different sentences, and only the first one
-   * is true. `halted` is deliberately excluded: an opt-out or a hostile reply
-   * closed that case, and a click should not reopen it.
+   * is true.
+   *
+   * `halted` is included as of B-86. It is not only where an opt-out lands: a
+   * delivery that would not go through, a gate with no channel left to try, and
+   * a case somebody settled elsewhere all end there too, and none of those is a
+   * customer withdrawing consent. The API refuses the one case that is — a
+   * halted case whose customer replied STOP — and says so, which is a better
+   * answer than a button that was never offered.
    */
-  const canEscalate = !done && stage !== "escalated" && stage !== "recovered" && stage !== "halted";
+  const canEscalate = !done && stage !== "escalated" && stage !== "recovered";
 
   /*
    * A case you already took is not a dead button, it is a link (B-80).
@@ -596,7 +602,11 @@ function Overrides({
           type="button"
           onClick={() => onOverride(paused ? "resume" : "pause")}
           className="btn-op-quiet"
-          disabled={waiting || closed || done}
+          // A paused case can always be handed back, whatever stage it reached
+          // while it was paused (B-86). Disabling this on a closed case left a
+          // merchant who had paused a case that then halted with no way to
+          // resume it — the API would have accepted the call the whole time.
+          disabled={waiting || done || (closed && !paused)}
           title={reason(
             closed || done,
             done ? "This case was closed outside Tugboat" : closedWhy,

@@ -161,7 +161,7 @@ describe("the voice dialogue engine", () => {
 });
 
 /**
- * B-83 — the promise-date pattern matched no date at all.
+ * B-84 — the promise-date pattern matched no date at all.
  *
  * `/^d{4}-d{2}-d{2}$/` is missing its escapes: it matches the literal string
  * "dddd-dd-dd" and rejects "2026-09-03". Every live call in which the customer
@@ -173,7 +173,7 @@ describe("the voice dialogue engine", () => {
  * Tested through the schema rather than the service because the schema is where
  * the defect was, and a regex is exactly the kind of thing that looks right.
  */
-describe("liveTurnSchema — the promise date (B-83)", () => {
+describe("liveTurnSchema — the promise date (B-84)", () => {
   const turn = (promise_date: unknown) => ({
     say: "Theek hai, main aapko link bhej deti hoon.",
     end_call: true,

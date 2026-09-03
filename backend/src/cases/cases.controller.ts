@@ -105,11 +105,15 @@ export class CasesController {
       pending: record.actions
         .filter((action) => action.status === "PLANNED" && action.scheduledFor !== null)
         .map((action, index) => toPendingEvent(action, record.events.length + index + 1)),
-      outcome: toOutcome(record, {
-        contacts: record.actions.filter((action) => action.channel !== "RETRY").length,
-        llmCalls: llm.calls,
-        llmTokens: llm.tokens,
-      }),
+      outcome: toOutcome(
+        record,
+        {
+          contacts: record.actions.filter((action) => action.channel !== "RETRY").length,
+          llmCalls: llm.calls,
+          llmTokens: llm.tokens,
+        },
+        record.approvals.length,
+      ),
       audit: ledger,
       neighbours: {
         prev: neighbours.prev ? toCaseRef(neighbours.prev) : null,

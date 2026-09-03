@@ -27,9 +27,17 @@ import type { CaseStage } from "@prisma/client";
  * who wants to work it themselves has to be able to take it, or "compliant
  * escalation" means only "escalation the agent chose". The cap is not weakened
  * by this: every outbound action still passes the gate, which counts attempts
- * against the pack and refuses a fifth. `halted` deliberately does NOT get the
- * same door — a case closed by an opt-out or by hostility is not something a
- * click should reopen.
+ * against the pack and refuses a fifth.
+ *
+ * `halted` now gets the same door, which it did not before B-86. The reasoning
+ * against it was that a halted case is one an opt-out or a hostile reply
+ * closed, and a click should not reopen that. Two of those three words were
+ * wrong: `halted` is also where a delivery that would not go through, a
+ * gate refusal with no channel left, and a merchant's own "resolved elsewhere"
+ * land, and none of those is the customer withdrawing consent. The opt-out is
+ * guarded where it actually lives — `CaseOverridesService` refuses to take a
+ * case whose customer replied STOP, and the gate refuses every send to them
+ * regardless — rather than by walling off a whole stage from its owner.
  */
 const TRANSITIONS: Record<CaseStage, readonly CaseStage[]> = {
   detected: ["diagnosed", "escalated", "halted", "recovered"],
@@ -39,7 +47,7 @@ const TRANSITIONS: Record<CaseStage, readonly CaseStage[]> = {
   escalated: ["intervening", "waiting", "recovered", "halted", "exhausted"],
   promised: ["recovered", "intervening", "escalated", "halted", "exhausted"],
   recovered: [],
-  halted: ["recovered"],
+  halted: ["recovered", "escalated"],
   exhausted: ["recovered", "escalated"],
 };
 

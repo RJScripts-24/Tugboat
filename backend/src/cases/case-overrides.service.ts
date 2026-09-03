@@ -110,6 +110,16 @@ export class CaseOverridesService {
         message: `${toCaseRef(caseId)} is ${record.stage}; the agent no longer works it.`,
       });
     }
+    // Taking a halted case is allowed (B-86), but not when the customer is the
+    // reason it halted. An opt-out is theirs, and a merchant reopening the case
+    // to work it would be reopening it to contact somebody who said STOP — the
+    // gate would refuse every send anyway, so the only thing this would produce
+    // is a case that looks workable and is not.
+    if (kind === "escalate" && record.stage === "halted" && record.customer.optedOutAt !== null) {
+      const message = `${toCaseRef(caseId)} halted because this customer replied STOP. The case cannot be taken back on — an opt-out is the customer's, not the merchant's.`;
+      throw new BadRequestException({ error: message, message });
+    }
+
     // The one bound the override does not lift, refused here rather than in the
     // gate so the merchant is told at the click instead of watching a call
     // vanish into a queue. `UNWAIVABLE_CHECKS` is the same rule stated where

@@ -23,7 +23,7 @@ function minutesAgo(date: Date): number {
  * real scheduled action replaces it. It describes the case honestly today
  * rather than promising a channel and a time nothing has decided yet.
  */
-function nextActionLabel(record: Case): string {
+function nextActionLabel(record: Case, pendingApprovals: number): string {
   // A pause is the next action, because it is the reason there isn't one. The
   // column read "Waiting on the customer" on a case a merchant had just stood
   // the agent down on, which is how a button that works reads as one that does
@@ -43,7 +43,13 @@ function nextActionLabel(record: Case): string {
     case "waiting":
       return "Waiting on the customer";
     case "escalated":
-      return "Waiting on you in Approvals";
+      // Only when a card is genuinely open. A case escalated whose request has
+      // been answered, or one escalated before B-85 taught the diagnoser to
+      // raise one, is still with a person — but sending them to an empty queue
+      // is the same broken promise as a button that does nothing.
+      return pendingApprovals > 0
+        ? "Waiting on you in Approvals"
+        : "With you · no open request";
     case "promised":
       return "Promise check-in scheduled";
     case "halted":
@@ -72,7 +78,9 @@ export type PipelineCase = {
   recoveredPaise: number;
 };
 
-export function toPipelineCase(record: Case & { customer: Customer }): PipelineCase {
+export function toPipelineCase(
+  record: Case & { customer: Customer; approvals?: { id: string }[] },
+): PipelineCase {
   return {
     id: toCaseRef(record.id),
     type: record.type,
@@ -85,7 +93,7 @@ export function toPipelineCase(record: Case & { customer: Customer }): PipelineC
     confidence: record.diagnosisConfidence,
     method: record.diagnosisMethod,
     stage: record.stage,
-    nextAction: nextActionLabel(record),
+    nextAction: nextActionLabel(record, record.approvals?.length ?? 0),
     attempts: record.attemptsUsed,
     attemptCap: record.attemptCap,
     updatedMinutesAgo: minutesAgo(record.updatedAt),
@@ -243,6 +251,7 @@ export function toBounds(
 export function toOutcome(
   record: Case,
   counts: { contacts: number; llmCalls: number; llmTokens: number },
+  pendingApprovals = 0,
 ) {
   const recovered = record.recoveredAmountPaise > 0;
 
@@ -251,7 +260,7 @@ export function toOutcome(
     headline: recovered
       ? `Recovered ₹${Math.round(record.recoveredAmountPaise / 100)}`
       : `₹${Math.round(record.amountPaise / 100)} still at risk`,
-    detail: nextActionLabel(record),
+    detail: nextActionLabel(record, pendingApprovals),
     atRiskPaise: record.amountPaise,
     recoveredPaise: record.recoveredAmountPaise,
     timeToRecoveryMinutes: recovered

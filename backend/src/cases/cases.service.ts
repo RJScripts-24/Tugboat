@@ -13,7 +13,19 @@ import {
   type AppendEventInput,
 } from "./case-events.service";
 
-const CASE_INCLUDE = { customer: true } satisfies Prisma.CaseInclude;
+/**
+ * The customer, and whether anything is actually waiting on a person.
+ *
+ * The pending approvals are here rather than counted later because the pipeline
+ * label claimed "Waiting on you in Approvals" from the stage alone, and a case
+ * can sit in `escalated` with its request already answered — or, before B-85,
+ * with no request ever raised. 178 cases said a card existed while the queue
+ * held none (B-85). One boolean, read from the same table the queue reads.
+ */
+const CASE_INCLUDE = {
+  customer: true,
+  approvals: { where: { decision: null }, select: { id: true } },
+} satisfies Prisma.CaseInclude;
 
 export type CaseWithCustomer = Prisma.CaseGetPayload<{ include: typeof CASE_INCLUDE }>;
 
@@ -258,6 +270,10 @@ export class CasesService {
         events: { orderBy: { seq: "asc" } },
         actions: { orderBy: { createdAt: "asc" } },
         promises: true,
+        // Same reason as `CASE_INCLUDE`: the outcome card's line says whether
+        // somebody is being asked something, and that is a fact about the
+        // queue, not about the stage.
+        approvals: { where: { decision: null }, select: { id: true } },
       },
     });
 

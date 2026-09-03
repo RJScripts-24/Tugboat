@@ -141,6 +141,33 @@ export class IngestionService {
     // the case exists; everything that contacts a customer happens on the
     // queue, where it can be delayed, retried and cancelled. An escalated case
     // is left alone: it is waiting on a person, not on a schedule.
+    // An escalation is a question, and until B-85 nobody was asked it. The
+    // diagnoser moves a case straight to `escalated` when the confidence is
+    // under the floor or the cause reads UNKNOWN, and this branch then left it
+    // alone — "waiting on a person" in a queue that person never saw. D-151
+    // says every escalation raises a request; it covered the gateless
+    // executor escalations and the Control Tower's own "Escalate to me", and
+    // missed the one path that fires before the Executor is ever involved.
+    // Raised over the queue for the same reason the override is: the handover
+    // job is the one door into `approvals` that does not need a `forwardRef`.
+    if (diagnosis?.escalated) {
+      try {
+        await this.queue.enqueue(
+          {
+            kind: "case.handover",
+            caseId: record.id,
+            jobId: `case:${record.id}:handover:0`,
+            reason: `Diagnosed ${diagnosis.rootCause.toLowerCase().replace(/_/g, " ")} at ${diagnosis.confidence.toFixed(2)} — under the confidence floor, so the agent did not guess`,
+          },
+          { delayMs: 0 },
+        );
+      } catch (error) {
+        this.logger.error(
+          `Case ${toCaseRef(record.id)} escalated at diagnosis but its handover card could not be queued: ${(error as Error).message}`,
+        );
+      }
+    }
+
     if (diagnosis && !diagnosis.escalated) {
       try {
         await this.executor.scheduleFirstStep(record.id);
